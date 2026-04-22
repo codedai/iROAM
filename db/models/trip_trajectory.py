@@ -83,7 +83,18 @@ class TripTrajectory(Base):
     )
 
     __table_args__ = (
-        Index("ix_tt_trip_start_dt", "trip_id", "start_date", "datetime"),
+        # Unique at the trip-instance grain. Enforces the runner's
+        # delete-then-insert contract at the schema level — any future code
+        # path that tries to simple-append will get a DB-level error rather
+        # than silently doubling the dataset. Doubles as the hot-path lookup
+        # index for per-trip-instance queries.
+        Index(
+            "ux_trip_trajectories_instance_dt",
+            "trip_id",
+            "start_date",
+            "datetime",
+            unique=True,
+        ),
         Index("ix_tt_route_service_dt", "route_id", "service_date", "datetime"),
         Index("ix_tt_run", "run_id"),
     )
