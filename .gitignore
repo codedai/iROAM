@@ -21,6 +21,8 @@ htmlcov/
 # Local data / large static GTFS dump
 /Complete GTFS/
 /data/
+# Analytics CSV exports (written by --export-csv)
+/out/
 
 # Captured test fixtures may contain raw feed payloads; keep one sample in git only
 # (uncomment the next line to ignore all .pb files)
