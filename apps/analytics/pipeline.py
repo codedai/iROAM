@@ -6,7 +6,7 @@ The runner owns the transaction + analytics_runs lifecycle.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 import pandas as pd
 from sqlalchemy import func, select
@@ -54,6 +54,33 @@ def list_trip_instances(
         select(VehiclePosition.trip_id, _EFFECTIVE_START_DATE.label("eff_start_date"))
         .where(VehiclePosition.trip_id.is_not(None))
         .where(_EFFECTIVE_START_DATE == yyyymmdd)
+        .distinct()
+    )
+    if route_id is not None:
+        stmt = stmt.where(VehiclePosition.route_id == route_id)
+    return [(row.trip_id, row.eff_start_date) for row in session.execute(stmt).all()]
+
+
+def list_changed_trip_instances(
+    session: Session,
+    service_date: date,
+    *,
+    since: datetime,
+    route_id: str | None = None,
+) -> list[tuple[str, str]]:
+    """Trip instances with at least one VehiclePosition row newer than ``since``.
+
+    Used by the analytics worker for incremental refresh: only trips whose
+    raw observations have grown since the last tick need their trajectory
+    re-derived. Safe for idempotent re-runs because the runner
+    delete-then-inserts per ``(trip_id, start_date)``.
+    """
+    yyyymmdd = service_date.strftime("%Y%m%d")
+    stmt = (
+        select(VehiclePosition.trip_id, _EFFECTIVE_START_DATE.label("eff_start_date"))
+        .where(VehiclePosition.trip_id.is_not(None))
+        .where(_EFFECTIVE_START_DATE == yyyymmdd)
+        .where(VehiclePosition.fetched_at > since)
         .distinct()
     )
     if route_id is not None:

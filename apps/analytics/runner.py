@@ -12,6 +12,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pandas as pd
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from apps.analytics import csv_export, pipeline
@@ -75,12 +76,22 @@ def run_for_date(
     upsample_resolution_s: int = 10,
     max_orthogonal_distance_m: float = 200.0,
     export_csv_dir: Path | None = None,
+    only_changed_since: datetime | None = None,
 ) -> RunOutcome:
-    """Process every trip instance whose ``start_date`` matches ``service_date``."""
+    """Process trip instances whose ``start_date`` matches ``service_date``.
+
+    When ``only_changed_since`` is set, scopes work to trip instances that
+    have at least one VehiclePosition observation newer than the cutoff —
+    this is the hot path for the analytics worker, which runs every
+    ``ANALYTICS_WORKER_INTERVAL_SECONDS``. In both modes, each trip instance
+    is refreshed atomically: old trajectory rows for ``(trip_id, start_date)``
+    are deleted and fresh ones inserted in the same transaction.
+    """
     config = {
         "upsample_resolution_s": upsample_resolution_s,
         "max_orthogonal_distance_m": max_orthogonal_distance_m,
         "route_id": route_id,
+        "only_changed_since": only_changed_since.isoformat() if only_changed_since else None,
     }
     run = AnalyticsRun(
         service_date=service_date,
@@ -100,7 +111,14 @@ def run_for_date(
         static = load_all()
         shape_lines = build_linestrings(static.shapes)
 
-        instances = pipeline.list_trip_instances(session, service_date, route_id=route_id)
+        if only_changed_since is not None:
+            instances = pipeline.list_changed_trip_instances(
+                session, service_date, since=only_changed_since, route_id=route_id
+            )
+        else:
+            instances = pipeline.list_trip_instances(
+                session, service_date, route_id=route_id
+            )
         _logger.info(
             "analytics_start",
             extra={
@@ -108,6 +126,9 @@ def run_for_date(
                 "service_date": service_date.isoformat(),
                 "route_id": route_id,
                 "trip_instances": len(instances),
+                "only_changed_since": (
+                    only_changed_since.isoformat() if only_changed_since else None
+                ),
             },
         )
 
@@ -124,6 +145,18 @@ def run_for_date(
             if df.empty:
                 continue
             orm_rows = _df_to_orm(df, run_id)
+            # Refresh-semantics: drop the trip instance's prior trajectory
+            # rows, then insert the freshly computed ones atomically (one
+            # commit per trip). This is what makes re-running for the same
+            # service_date safe — no ON CONFLICT needed, and partial
+            # trajectories from earlier in the day get upgraded as more raw
+            # data lands.
+            session.execute(
+                delete(TripTrajectory).where(
+                    TripTrajectory.trip_id == trip_id,
+                    TripTrajectory.start_date == start_date,
+                )
+            )
             session.add_all(orm_rows)
             session.commit()
             total_rows += len(orm_rows)

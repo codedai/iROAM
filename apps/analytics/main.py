@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from apps.analytics.runner import run_for_date
@@ -24,6 +24,14 @@ _logger = get_logger(__name__)
 
 def _parse_date(s: str) -> date:
     return date.fromisoformat(s)
+
+
+def _parse_since(s: str) -> datetime:
+    """Accept ISO-8601 datetimes; a bare date is treated as midnight UTC."""
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -48,6 +56,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="also write {route}_{date}_dir{N}.csv files into this directory",
     )
+    p.add_argument(
+        "--since",
+        type=_parse_since,
+        default=None,
+        help="only refresh trip instances with VehiclePosition observations "
+        "newer than this ISO-8601 timestamp (used by the worker loop)",
+    )
     return p.parse_args(argv)
 
 
@@ -71,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
             upsample_resolution_s=upsample_s,
             max_orthogonal_distance_m=max_orth,
             export_csv_dir=args.export_csv,
+            only_changed_since=args.since,
         )
 
     print(
