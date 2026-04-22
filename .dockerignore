@@ -1,0 +1,24 @@
+# Keep the build context small and deterministic.
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+.git
+.gitignore
+.env
+.env.local
+tests
+Complete GTFS
+data
+/*.md
+Makefile
+docker-compose.yml
+Dockerfile
+.dockerignore

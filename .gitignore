@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+.env.local
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.log
+.idea/
+.vscode/
+.DS_Store
+
+# Local data / large static GTFS dump
+/Complete GTFS/
+/data/
+
+# Captured test fixtures may contain raw feed payloads; keep one sample in git only
+# (uncomment the next line to ignore all .pb files)
+# tests/fixtures/*.pb

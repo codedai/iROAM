@@ -1,0 +1,78 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: ttc
+      POSTGRES_PASSWORD: ttc
+      POSTGRES_DB: ttc_gtfsrt
+    ports:
+      - "5433:5432"  # host 5433 → container 5432 (avoids clash with any host pg)
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ttc -d ttc_gtfsrt"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # One-shot: applies alembic migrations, then exits cleanly.
+  migrator:
+    build:
+      context: .
+      target: migrator
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://ttc:ttc@postgres:5432/ttc_gtfsrt
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      target: api
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://ttc:ttc@postgres:5432/ttc_gtfsrt
+      GTFS_STATIC_DIR: /gtfs
+    volumes:
+      - "./Complete GTFS:/gtfs:ro"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  collector:
+    build:
+      context: .
+      target: collector
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://ttc:ttc@postgres:5432/ttc_gtfsrt
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      target: dashboard
+    env_file: .env
+    environment:
+      DASHBOARD_API_BASE_URL: http://api:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pg_data:
