@@ -198,12 +198,24 @@ def iroam_analytics(
         elif ev.type == "crowd":
             hour_crowd[h] += 1
 
-    # Per-stop anomaly frequency (integer-rounded).
-    stop_freq = [0] * len(route_stops.stops)
+    # Per-stop anomaly frequency (integer-rounded). Kept as a flat array
+    # ``stop_frequency`` for the aggregate view and also split by type so the
+    # Analytics page's "Anomaly Frequency by Stop" chart can filter.
+    n_stops = len(route_stops.stops)
+    stop_freq = [0] * n_stops
+    stop_freq_bunch = [0] * n_stops
+    stop_freq_idle = [0] * n_stops
+    stop_freq_crowd = [0] * n_stops
     for ev in events:
         si = int(round(ev.stop_index))
-        if 0 <= si < len(stop_freq):
+        if 0 <= si < n_stops:
             stop_freq[si] += 1
+            if ev.type == "bunch":
+                stop_freq_bunch[si] += 1
+            elif ev.type == "idle":
+                stop_freq_idle[si] += 1
+            elif ev.type == "crowd":
+                stop_freq_crowd[si] += 1
 
     # Per-hour mean operating speed in km/h (only over "moving" samples).
     hour_speed_sum = [0.0] * 24
@@ -278,6 +290,11 @@ def iroam_analytics(
         "hour_crowd": hour_crowd,
         "speed_by_hour": speed_by_hour,
         "stop_frequency": stop_freq,
+        "stop_frequency_by_type": {
+            "bunch": stop_freq_bunch,
+            "idle": stop_freq_idle,
+            "crowd": stop_freq_crowd,
+        },
         "allocation_by_hour": allocation,
     }
 

@@ -899,12 +899,46 @@ const sliceHours = (arr24, fill=0) => {
 
 const AnalyticsPage = ({ analytics, route, date }) => {
   const [filter, setFilter] = useState('all');
+  const [colPct, setColPct] = useState(50);   // % of grid width given to left column
+  const [rowPct, setRowPct] = useState(50);   // % of grid height given to top row
+  const [dragAxis, setDragAxis] = useState(null);   // 'col' | 'row' | null
+  const gridRef = useRef(null);
+
+  useEffect(() => {
+    if (!dragAxis) return;
+    const onMove = e => {
+      const rect = gridRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      if (dragAxis === 'col') {
+        const pct = ((e.clientX - rect.left) / rect.width) * 100;
+        setColPct(Math.max(20, Math.min(80, pct)));
+      } else {
+        const pct = ((e.clientY - rect.top) / rect.height) * 100;
+        setRowPct(Math.max(20, Math.min(80, pct)));
+      }
+    };
+    const onUp = () => setDragAxis(null);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    document.body.style.cursor = dragAxis === 'col' ? 'col-resize' : 'row-resize';
+    document.body.style.userSelect = 'none';
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [dragAxis]);
 
   const HOUR_BUNCH  = useMemo(() => sliceHours(analytics && analytics.hour_bunch, 0), [analytics]);
   const HOUR_IDLE   = useMemo(() => sliceHours(analytics && analytics.hour_idle,  0), [analytics]);
   const HOUR_CROWD  = useMemo(() => sliceHours(analytics && analytics.hour_crowd, 0), [analytics]);
   const SPEED_DATA  = useMemo(() => sliceHours(analytics && analytics.speed_by_hour, 0), [analytics]);
-  const STOP_FREQ   = (analytics && analytics.stop_frequency) || [];
+  const STOP_FREQ_ALL = (analytics && analytics.stop_frequency) || [];
+  const STOP_FREQ_BY_TYPE = (analytics && analytics.stop_frequency_by_type) || {};
+  const STOP_FREQ = filter === 'all'
+    ? STOP_FREQ_ALL
+    : (STOP_FREQ_BY_TYPE[filter] || []);
   const TIME_ALLOC  = useMemo(() => {
     const full = (analytics && analytics.allocation_by_hour) || [];
     return hours.map(h => (full[h] && full[h].length === 4) ? full[h] : [100, 0, 0, 0]);
@@ -933,44 +967,72 @@ const AnalyticsPage = ({ analytics, route, date }) => {
         </div>
       </div>
 
-      {/* 2×2 grid */}
-      <div style={{ flex:1, display:'grid', gridTemplateColumns:'1fr 1fr', gridTemplateRows:'1fr 1fr', overflow:'hidden' }}>
+      {/* 2×2 grid with drag-resizable dividers (one shared column split, one row split). */}
+      <div ref={gridRef} style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', position:'relative' }}>
 
-        <ChartPanel title="Anomaly Frequency by Stop" sub="Event count per stop · ordered along route" border="right bottom">
-          <SpatialBubbleMap filter={filter} stopFreq={STOP_FREQ} />
-        </ChartPanel>
+        {/* Top row */}
+        <div style={{ display:'flex', height:`calc(${rowPct}% - 3px)`, minHeight:0 }}>
+          <div style={{ width:`calc(${colPct}% - 3px)`, minWidth:0, overflow:'hidden' }}>
+            <ChartPanel title="Anomaly Frequency by Stop" sub="Event count per stop · ordered along route">
+              <SpatialBubbleMap filter={filter} stopFreq={STOP_FREQ} />
+            </ChartPanel>
+          </div>
+          <ResizeHandle axis="col" active={dragAxis === 'col'} onStart={() => setDragAxis('col')} />
+          <div style={{ flex:1, minWidth:0, overflow:'hidden' }}>
+            <ChartPanel title="Average Operating Speed" sub="km/h · shaded bands = AM/PM peak">
+              <SpeedLine data={SPEED_DATA} />
+            </ChartPanel>
+          </div>
+        </div>
 
-        <ChartPanel title="Average Operating Speed" sub="km/h · shaded bands = AM/PM peak" border="bottom">
-          <SpeedLine data={SPEED_DATA} />
-        </ChartPanel>
+        <ResizeHandle axis="row" active={dragAxis === 'row'} onStart={() => setDragAxis('row')} />
 
-        <ChartPanel title="Anomaly Frequency by Hour" sub="Event count · grouped bar" border="right">
-          <GroupedBar bData={bData} iData={iData} cData={cData} />
-        </ChartPanel>
-
-        <ChartPanel title="Running Time Allocation" sub="% of travel time by anomaly type">
-          <StackedBar data={TIME_ALLOC} />
-        </ChartPanel>
+        {/* Bottom row (shares the column split so panels align with the top row) */}
+        <div style={{ display:'flex', flex:1, minHeight:0 }}>
+          <div style={{ width:`calc(${colPct}% - 3px)`, minWidth:0, overflow:'hidden' }}>
+            <ChartPanel title="Anomaly Frequency by Hour" sub="Event count · grouped bar">
+              <GroupedBar bData={bData} iData={iData} cData={cData} />
+            </ChartPanel>
+          </div>
+          <ResizeHandle axis="col" active={dragAxis === 'col'} onStart={() => setDragAxis('col')} />
+          <div style={{ flex:1, minWidth:0, overflow:'hidden' }}>
+            <ChartPanel title="Running Time Allocation" sub="% of travel time by anomaly type">
+              <StackedBar data={TIME_ALLOC} />
+            </ChartPanel>
+          </div>
+        </div>
 
       </div>
     </div>
   );
 };
 
-const ChartPanel = ({ title, sub, border, children }) => {
-  const bStyle = {};
-  if (border?.includes('right'))  bStyle.borderRight  = '1px solid var(--border)';
-  if (border?.includes('bottom')) bStyle.borderBottom = '1px solid var(--border)';
-  return (
-    <div style={{ padding:'16px 18px', overflow:'hidden', display:'flex', flexDirection:'column', ...bStyle }}>
-      <div style={{ marginBottom:10 }}>
-        <div style={{ fontSize:13, fontWeight:500 }}>{title}</div>
-        <div style={{ fontSize:11, color:'var(--t3)' }}>{sub}</div>
-      </div>
-      <div style={{ flex:1, overflow:'hidden' }}>{children}</div>
+const ChartPanel = ({ title, sub, children }) => (
+  <div style={{ padding:'16px 18px', overflow:'hidden', display:'flex', flexDirection:'column', height:'100%' }}>
+    <div style={{ marginBottom:10 }}>
+      <div style={{ fontSize:13, fontWeight:500 }}>{title}</div>
+      <div style={{ fontSize:11, color:'var(--t3)' }}>{sub}</div>
     </div>
-  );
-};
+    <div style={{ flex:1, overflow:'hidden' }}>{children}</div>
+  </div>
+);
+
+// Drag handle placed between analytics panels. `axis='col'` splits left/right
+// (mouse moves horizontally); `axis='row'` splits top/bottom.
+const ResizeHandle = ({ axis, active, onStart }) => (
+  <div
+    onMouseDown={onStart}
+    title={axis === 'col' ? 'Drag to resize columns' : 'Drag to resize rows'}
+    style={{
+      flexShrink: 0,
+      width:  axis === 'col' ? 6 : '100%',
+      height: axis === 'row' ? 6 : 'auto',
+      cursor: axis === 'col' ? 'col-resize' : 'row-resize',
+      background: active ? 'var(--accent)' : 'var(--border)',
+      transition: active ? 'none' : 'background 0.15s ease',
+    }}
+  />
+);
 
 const SpatialBubbleMap = ({ filter, stopFreq }) => {
   const n = ROUTE29_STOPS.length;
