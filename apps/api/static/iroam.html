@@ -60,6 +60,24 @@ let NUM_STOPS = 0;
 let LAT_MIN = 0, LAT_MAX = 1, LON_MIN = 0, LON_MAX = 1;
 let START_T = 360, END_T = 1320;         // 06:00 → 22:00 fallback; overwritten by /iroam/buses
 
+// Route metadata — display names + per-route direction labels.
+// The backend still speaks GTFS direction_id (0|1); `directionIdFor` below
+// converts the display label back to an integer.
+const ROUTE_META = {
+  '29':  { name: 'Dufferin', directions: ['Northbound', 'Southbound'] },
+  '510': { name: 'Spadina',  directions: ['Northbound', 'Southbound'] },
+  '504': { name: 'King',     directions: ['Eastbound',  'Westbound']  },
+  '7':   { name: 'Bathurst', directions: ['Northbound', 'Southbound'] },
+  '35':  { name: 'Jane',     directions: ['Northbound', 'Southbound'] },
+  '501': { name: 'Queen',    directions: ['Eastbound',  'Westbound']  },
+  '506': { name: 'Carlton',  directions: ['Eastbound',  'Westbound']  },
+  '25':  { name: 'Don Mills',directions: ['Northbound', 'Southbound'] },
+  '36':  { name: 'Finch West',directions: ['Eastbound', 'Westbound']  },
+};
+const DIR_COLOR = { Northbound:'var(--acc2)', Eastbound:'var(--acc2)', Southbound:'#A78BFA', Westbound:'#A78BFA' };
+const DIR_BG    = { Northbound:'rgba(27,184,176,0.1)', Eastbound:'rgba(27,184,176,0.1)', Southbound:'rgba(167,139,250,0.1)', Westbound:'rgba(167,139,250,0.1)' };
+const DIR_SHORT = { Northbound:'↑ NB', Southbound:'↓ SB', Eastbound:'→ EB', Westbound:'← WB' };
+
 const stopLatNorm = i => {
   if (NUM_STOPS < 2 || LAT_MAX === LAT_MIN) return NUM_STOPS < 2 ? 0 : i / (NUM_STOPS - 1);
   return (ROUTE29_STOPS[i].lat - LAT_MIN) / (LAT_MAX - LAT_MIN);
@@ -70,14 +88,18 @@ const stopLonNorm = i => {
 };
 
 function applyStopsAndWindow(stopsPayload, timeWindow) {
-  const stops = (stopsPayload && stopsPayload.stops) || [];
-  ROUTE29_STOPS = stops.map(s => ({ name: s.name, lat: s.lat, lon: s.lon, distance_m: s.distance_m }));
-  STOPS = ROUTE29_STOPS.map(s => s.name);
-  NUM_STOPS = ROUTE29_STOPS.length;
-  if (NUM_STOPS >= 2) {
-    const lats = ROUTE29_STOPS.map(s => s.lat), lons = ROUTE29_STOPS.map(s => s.lon);
-    LAT_MIN = Math.min(...lats); LAT_MAX = Math.max(...lats);
-    LON_MIN = Math.min(...lons); LON_MAX = Math.max(...lons);
+  // Pass `null` for stopsPayload to leave the current stop list untouched
+  // (used by the LIVE auto-refresh, which only wants to extend the window).
+  if (stopsPayload !== null) {
+    const stops = (stopsPayload && stopsPayload.stops) || [];
+    ROUTE29_STOPS = stops.map(s => ({ name: s.name, lat: s.lat, lon: s.lon, distance_m: s.distance_m }));
+    STOPS = ROUTE29_STOPS.map(s => s.name);
+    NUM_STOPS = ROUTE29_STOPS.length;
+    if (NUM_STOPS >= 2) {
+      const lats = ROUTE29_STOPS.map(s => s.lat), lons = ROUTE29_STOPS.map(s => s.lon);
+      LAT_MIN = Math.min(...lats); LAT_MAX = Math.max(...lats);
+      LON_MIN = Math.min(...lons); LON_MAX = Math.max(...lons);
+    }
   }
   if (timeWindow && timeWindow.start != null && timeWindow.end != null) {
     START_T = Math.max(0, Math.floor(timeWindow.start - 5));
@@ -85,12 +107,32 @@ function applyStopsAndWindow(stopsPayload, timeWindow) {
   }
 }
 
-function directionIdFor(dir) { return dir === 'Northbound' ? 1 : 0; }
+function directionsFor(routeId) {
+  return (ROUTE_META[routeId]?.directions) || ['Northbound', 'Southbound'];
+}
+// Map the display label back to the backend GTFS direction_id (0|1) by its
+// index within the route's direction list. ROUTE_META ordering defines the
+// contract (directions[0] == direction_id 0, directions[1] == direction_id 1).
+function directionIdFor(dir, routeId) {
+  const labels = directionsFor(routeId);
+  const i = labels.indexOf(dir);
+  return i >= 0 ? i : 0;
+}
 
 async function fetchJSON(url) {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`${url} → HTTP ${r.status}`);
   return r.json();
+}
+
+// YYYY-MM-DD for "now" in the same timezone the analytics worker uses to
+// compute service_date (ANALYTICS_WORKER_SERVICE_DATE_TZ=America/Toronto).
+// Drives the LIVE auto-refresh: when params.date equals this, the dashboard
+// polls /iroam/buses + /iroam/analytics on an interval.
+function todayInToronto() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
 }
 
 async function loadRouteCatalog() {
@@ -106,7 +148,7 @@ async function loadStopsOnly(route_id, direction_id) {
 }
 
 async function loadDashboardData(p) {
-  const direction_id = directionIdFor(p.dir);
+  const direction_id = directionIdFor(p.dir, p.route);
   const qs =
     `route_id=${encodeURIComponent(p.route)}` +
     `&service_date=${p.date}` +
@@ -246,9 +288,9 @@ const Sidebar = ({ active, setActive }) => (
 // ─────────────────────────────────────────────────────────────────────────────
 // TOP BAR
 // ─────────────────────────────────────────────────────────────────────────────
-const TopBar = ({ page, route, date, dir, drawerOpen, setDrawerOpen, totals }) => {
+const TopBar = ({ page, route, date, dir, drawerOpen, setDrawerOpen, totals, isLive }) => {
   const titles = { params: 'Parameter Configuration', playback: 'Route Playback', analysis: 'Visual Analytics' };
-  const dirColor = dir === 'Northbound' ? 'var(--acc2)' : '#A78BFA';
+  const dirColor = DIR_COLOR[dir] || 'var(--acc2)';
   return (
     <div style={{ height: 52, background: 'var(--s1)', borderBottom: '1px solid var(--border)',
       display: 'flex', alignItems: 'center', padding: '0 22px', gap: 18, flexShrink: 0 }}>
@@ -275,8 +317,16 @@ const TopBar = ({ page, route, date, dir, drawerOpen, setDrawerOpen, totals }) =
           ))}
         </div>
         <div style={{ width: 1, height: 18, background: 'var(--bhi)' }} />
-        <span style={{ fontSize: 11, color: 'var(--t3)', fontFamily: 'IBM Plex Mono' }}>
-          <span style={{ color: 'var(--crowd)', marginRight: 5, animation: 'pulse 2s ease infinite', display: 'inline-block' }}>●</span>LIVE
+        <span
+          title={isLive ? 'Auto-refreshing today\'s data every 25 s' : 'Historical date — auto-refresh off'}
+          style={{ fontSize: 11, fontFamily: 'IBM Plex Mono',
+            color: isLive ? 'var(--t2)' : 'var(--t3)', opacity: isLive ? 1 : 0.55 }}
+        >
+          <span style={{
+            color: isLive ? 'var(--crowd)' : 'var(--t3)',
+            marginRight: 5, display: 'inline-block',
+            animation: isLive ? 'pulse 2s ease infinite' : 'none',
+          }}>●</span>LIVE
         </span>
         {page !== 'params' && (
           <>
@@ -352,8 +402,8 @@ const ParameterPanel = ({ params, setP, onApply, applying, routeCatalog, stopsVe
           <div style={{ fontSize: 12, color: 'var(--t3)', marginBottom: 6 }}>Route</div>
           <select value={route} onChange={e => setP(p => ({ ...p, route: e.target.value }))} style={sel()}>
             {routeIds.length === 0
-              ? <option value={route}>Route {route}</option>
-              : routeIds.map(r => <option key={r} value={r}>Route {r}</option>)}
+              ? <option value={route}>Route {route}{ROUTE_META[route] ? ` — ${ROUTE_META[route].name}` : ''}</option>
+              : routeIds.map(r => <option key={r} value={r}>Route {r}{ROUTE_META[r] ? ` — ${ROUTE_META[r].name}` : ''}</option>)}
           </select>
         </div>
 
@@ -376,12 +426,12 @@ const ParameterPanel = ({ params, setP, onApply, applying, routeCatalog, stopsVe
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 12, color: 'var(--t3)', marginBottom: 6 }}>Direction</div>
           <div style={{ display: 'flex', gap: 8 }}>
-            {['Northbound', 'Southbound'].map(d => (
+            {directionsFor(route).map(d => (
               <button key={d} onClick={() => setP(p => ({ ...p, dir: d }))} style={{
                 flex: 1, padding: '8px', border: '1px solid', borderRadius: 7, cursor: 'pointer',
-                borderColor: dir === d ? (d === 'Northbound' ? 'var(--acc2)' : '#A78BFA') : 'var(--border)',
-                background: dir === d ? (d === 'Northbound' ? 'rgba(27,184,176,0.1)' : 'rgba(167,139,250,0.1)') : 'transparent',
-                color: dir === d ? (d === 'Northbound' ? 'var(--acc2)' : '#A78BFA') : 'var(--t2)',
+                borderColor: dir === d ? DIR_COLOR[d] : 'var(--border)',
+                background:  dir === d ? DIR_BG[d]    : 'transparent',
+                color:       dir === d ? DIR_COLOR[d] : 'var(--t2)',
                 fontSize: 13, transition: 'all 0.15s',
               }}>{d}</button>
             ))}
@@ -479,26 +529,59 @@ const ParameterPanel = ({ params, setP, onApply, applying, routeCatalog, stopsVe
 // ─────────────────────────────────────────────────────────────────────────────
 // PLAYBACK PAGE
 // ─────────────────────────────────────────────────────────────────────────────
-const PlaybackPage = ({ busData }) => {
+const SPEED_OPTIONS = [0.5, 1, 2, 4];
+
+const PlaybackPage = ({ busData, sliceKey }) => {
   const [playing, setPlaying] = useState(false);
   const [t, setT] = useState(START_T);
   const [vis, setVis] = useState({ bunch: true, idle: true, crowd: true });
+  const [mapW, setMapW] = useState(270);
+  const [dragging, setDragging] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const chartRef = useRef(null);
   const rafRef = useRef(null);
+
+  useEffect(() => {
+    if (!dragging) return;
+    const onMove = e => {
+      const rect = chartRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const w = rect.right - e.clientX;
+      setMapW(Math.max(180, Math.min(600, w)));
+    };
+    const onUp = () => setDragging(false);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [dragging]);
 
   const fmt = m => {
     const h = Math.floor(m / 60), mn = Math.floor(m % 60);
     return `${String(h).padStart(2,'0')}:${String(mn).padStart(2,'0')}`;
   };
 
-  // When a new slice loads, snap the playhead back to the window start.
-  useEffect(() => { setT(START_T); setPlaying(false); }, [busData]);
+  // Snap the playhead back to the window start only when the slice itself
+  // changes (route/date/dir). LIVE-mode refreshes swap busData for the same
+  // slice and must not yank the playhead.
+  useEffect(() => { setT(START_T); setPlaying(false); }, [sliceKey]);
+
+  // Keep the rAF callback free of stale `speed` closures.
+  const speedRef = useRef(speed);
+  useEffect(() => { speedRef.current = speed; }, [speed]);
 
   useEffect(() => {
     if (playing) {
       const step = () => {
         setT(cur => {
           if (cur >= END_T) { setPlaying(false); return END_T; }
-          return cur + 1.5;
+          return cur + 1.5 * speedRef.current;
         });
         rafRef.current = requestAnimationFrame(step);
       };
@@ -530,6 +613,22 @@ const PlaybackPage = ({ busData }) => {
           display:'flex', alignItems:'center', justifyContent:'center',
         }}><Ic n="reset" size={13} /></button>
 
+        <button
+          onClick={() => {
+            const i = SPEED_OPTIONS.indexOf(speed);
+            setSpeed(SPEED_OPTIONS[(i + 1) % SPEED_OPTIONS.length]);
+          }}
+          title={`Playback speed (click to cycle): ${speed}×`}
+          style={{
+            height:34, minWidth:44, padding:'0 8px', borderRadius:7, border:'1px solid',
+            borderColor: speed !== 1 ? 'var(--accent)' : 'var(--border)',
+            background: speed !== 1 ? 'rgba(224,123,50,0.15)' : 'var(--s2)',
+            color: speed !== 1 ? 'var(--accent)' : 'var(--t1)',
+            cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center',
+            fontFamily:'IBM Plex Mono', fontSize:12, fontWeight:500,
+          }}
+        >{speed}×</button>
+
         <div style={{ flex:1, display:'flex', alignItems:'center', gap:10 }}>
           <span style={{ fontFamily:'IBM Plex Mono', fontSize:12, color:'var(--accent)', minWidth:40 }}>{fmt(t)}</span>
           <div style={{ flex:1, cursor:'pointer', padding:'6px 0' }} onClick={e => {
@@ -556,17 +655,50 @@ const PlaybackPage = ({ busData }) => {
       </div>
 
       {/* Chart area */}
-      <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
+      <div ref={chartRef} style={{ flex:1, display:'flex', overflow:'hidden' }}>
         <TDDiagram busData={busData} currentT={t} vis={vis} fmt={fmt} />
-        <SchematicMap busData={busData} currentT={t} vis={vis} />
+        <div
+          onMouseDown={() => setDragging(true)}
+          title="Drag to resize spatial view"
+          style={{
+            width: 6, cursor: 'col-resize', flexShrink: 0,
+            background: dragging ? 'var(--accent)' : 'var(--border)',
+            transition: dragging ? 'none' : 'background 0.15s ease',
+            position: 'relative',
+          }}
+          onMouseEnter={e => { if (!dragging) e.currentTarget.style.background = 'var(--bhi)'; }}
+          onMouseLeave={e => { if (!dragging) e.currentTarget.style.background = 'var(--border)'; }}
+        >
+          <div style={{
+            position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+            width: 2, height: 28, background: dragging ? 'white' : 'var(--t3)', borderRadius: 1,
+            opacity: dragging ? 1 : 0.5, pointerEvents: 'none',
+          }} />
+        </div>
+        <div style={{ width: mapW, flexShrink: 0, display: 'flex' }}>
+          <SchematicMap busData={busData} currentT={t} vis={vis} width={mapW} />
+        </div>
       </div>
     </div>
   );
 };
 
 const TDDiagram = ({ busData, currentT, vis, fmt }) => {
-  const W = 760, H = 460;
-  const PAD = { top: 24, right: 28, bottom: 40, left: 70 };
+  const containerRef = useRef(null);
+  const [dims, setDims] = useState({ w: 760, h: 460 });
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const obs = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setDims({ w: Math.max(width, 300), h: Math.max(height - 28, 200) });
+    });
+    obs.observe(containerRef.current);
+    return () => obs.disconnect();
+  }, []);
+
+  const W = dims.w, H = dims.h;
+  const PAD = { top: 24, right: 28, bottom: 40, left: 86 };
   const xS = t => PAD.left + (t - START_T) / (END_T - START_T) * (W - PAD.left - PAD.right);
   const yS = d => {
     const lo = Math.floor(Math.min(d, NUM_STOPS - 2));
@@ -585,9 +717,9 @@ const TDDiagram = ({ busData, currentT, vis, fmt }) => {
   })();
 
   return (
-    <div style={{ flex:1.5, borderRight:'1px solid var(--border)', overflow:'hidden', position:'relative' }}>
-      <div style={{ padding:'10px 16px 0', fontSize:10, color:'var(--t3)', letterSpacing:'0.08em', textTransform:'uppercase' }}>Time–Distance Diagram</div>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width:'100%', height:'calc(100% - 28px)', display:'block' }}>
+    <div ref={containerRef} style={{ flex:1, borderRight:'1px solid var(--border)', overflow:'hidden', position:'relative', display:'flex', flexDirection:'column', minWidth:300 }}>
+      <div style={{ padding:'10px 16px 0', fontSize:10, color:'var(--t3)', letterSpacing:'0.08em', textTransform:'uppercase', flexShrink:0 }}>Time–Distance Diagram</div>
+      <svg width="100%" height="100%" style={{ display:'block', flex:1 }}>
 
         {/* Grid */}
         {xTicks.map(tick => (
@@ -605,11 +737,16 @@ const TDDiagram = ({ busData, currentT, vis, fmt }) => {
           </g>
         ))}
 
-        {/* Peak shading */}
-        {[[480,600],[900,1080]].map(([a,b], i) => (
-          <rect key={i} x={xS(a)} y={PAD.top} width={xS(b)-xS(a)} height={H - PAD.top - PAD.bottom}
-            fill="rgba(255,255,255,0.015)" />
-        ))}
+        {/* Peak shading — AM + PM, clipped to the visible window */}
+        {[[480,600],[1020,1140]]
+          .filter(([a,b]) => b > START_T && a < END_T)
+          .map(([a,b], i) => {
+            const aa = Math.max(a, START_T), bb = Math.min(b, END_T);
+            return (
+              <rect key={i} x={xS(aa)} y={PAD.top} width={xS(bb)-xS(aa)} height={H - PAD.top - PAD.bottom}
+                fill="rgba(255,255,255,0.02)" />
+            );
+          })}
 
         {/* Trajectories */}
         {busData.map((bus, idx) => {
@@ -639,8 +776,6 @@ const TDDiagram = ({ busData, currentT, vis, fmt }) => {
 
         {/* Axis labels */}
         <text x={(PAD.left + W - PAD.right) / 2} y={H - 4} textAnchor="middle" fontSize={9} fill="rgba(255,255,255,0.2)">Time of Day</text>
-        <text x={12} y={(PAD.top + H - PAD.bottom) / 2} textAnchor="middle" fontSize={9} fill="rgba(255,255,255,0.2)"
-          transform={`rotate(-90,12,${(PAD.top + H - PAD.bottom) / 2})`}>Distance Along Route →</text>
       </svg>
     </div>
   );
@@ -698,9 +833,9 @@ const SchematicMap = ({ busData, currentT, vis }) => {
   ).join(' ');
 
   return (
-    <div ref={containerRef} style={{ width: 270, overflow: 'hidden', position: 'relative', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+    <div ref={containerRef} style={{ width: '100%', overflow: 'hidden', position: 'relative', display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: '10px 16px 0', fontSize: 10, color: 'var(--t3)', letterSpacing: '0.08em', textTransform: 'uppercase', flexShrink: 0 }}>
-        Spatial View · Dufferin (GTFS)
+        Spatial View · GTFS
       </div>
       <svg width="100%" height="100%" style={{ display: 'block', flex: 1 }}>
 
@@ -801,7 +936,7 @@ const AnalyticsPage = ({ analytics, route, date }) => {
       {/* 2×2 grid */}
       <div style={{ flex:1, display:'grid', gridTemplateColumns:'1fr 1fr', gridTemplateRows:'1fr 1fr', overflow:'hidden' }}>
 
-        <ChartPanel title="Anomaly Frequency by Stop" sub="Bubble radius proportional to event count" border="right bottom">
+        <ChartPanel title="Anomaly Frequency by Stop" sub="Event count per stop · ordered along route" border="right bottom">
           <SpatialBubbleMap filter={filter} stopFreq={STOP_FREQ} />
         </ChartPanel>
 
@@ -841,44 +976,73 @@ const SpatialBubbleMap = ({ filter, stopFreq }) => {
   const n = ROUTE29_STOPS.length;
   const src = Array.isArray(stopFreq) ? stopFreq : [];
   const freqs = Array.from({length: n}, (_, i) => src[i] || 0);
-  const maxFreq = Math.max(1, ...freqs);
-  const W=400, H=220;
-  const PAD={ top:14, bottom:14, left:88, right:16 };
 
-  const yP = i => {
-    const norm = stopLatNorm(i);
-    return H - PAD.bottom - norm * (H - PAD.top - PAD.bottom);
-  };
-  const xP = i => PAD.left + stopLonNorm(i) * 14;
+  const W = 520, H = 220;
+  const PAD = { top: 18, right: 14, bottom: 62, left: 36 };
+  const plotW = W - PAD.left - PAD.right;
+  const plotH = H - PAD.top - PAD.bottom;
+  const barSlot = n > 0 ? plotW / n : plotW;
+  const barW = Math.min(barSlot * 0.62, 18);
 
-  const routePath = ROUTE29_STOPS.map((_, i) =>
-    `${i === 0 ? 'M' : 'L'}${xP(i).toFixed(1)},${yP(i).toFixed(1)}`
-  ).join(' ');
+  const rawMax = Math.max(...freqs, 1);
+  const yMax = Math.max(5, Math.ceil(rawMax / 5) * 5);
+  const yS = v => PAD.top + plotH - (v / yMax) * plotH;
+  const xS = i => PAD.left + i * barSlot + (barSlot - barW) / 2;
 
   const colorFor = f => f === 'bunch' ? 'var(--bunch)' : f === 'idle' ? 'var(--idle)' : f === 'crowd' ? 'var(--crowd)' : 'var(--accent)';
   const color = colorFor(filter);
 
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width:'100%', height:'100%' }}>
-      {/* Route polyline */}
-      <path d={routePath} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
-      <path d={routePath} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth={7} strokeLinecap="round" strokeLinejoin="round" />
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map(t => Math.round(t * yMax));
+  // Thin out rotated labels when there are many stops so they don't smear.
+  const labelStride = n <= 20 ? 1 : n <= 40 ? 2 : Math.ceil(n / 24);
 
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ width:'100%', height:'100%' }}>
+      {/* y gridlines + labels */}
+      {ticks.map(v => (
+        <g key={v}>
+          <line x1={PAD.left} x2={W - PAD.right} y1={yS(v)} y2={yS(v)} stroke="rgba(255,255,255,0.05)" />
+          <text x={PAD.left - 6} y={yS(v) + 3.2} textAnchor="end" fontSize={8.5} fill="rgba(255,255,255,0.35)" fontFamily="IBM Plex Mono">{v}</text>
+        </g>
+      ))}
+
+      {/* baseline */}
+      <line x1={PAD.left} x2={W - PAD.right} y1={yS(0)} y2={yS(0)} stroke="rgba(255,255,255,0.18)" />
+
+      {/* bars + rotated stop labels */}
       {ROUTE29_STOPS.map((s, i) => {
-        const r = 3 + (freqs[i] / maxFreq) * 14;
+        const h = (freqs[i] / yMax) * plotH;
+        const x = xS(i);
+        const y = yS(freqs[i]);
+        const cx = x + barW / 2;
+        const showLabel = i % labelStride === 0;
         return (
           <g key={(s.name || s.stop_id || '') + '-' + i}>
-            <circle cx={xP(i)} cy={yP(i)} r={r} fill={color} opacity={0.15} />
-            <circle cx={xP(i)} cy={yP(i)} r={3} fill={color} opacity={0.85} />
-            <text x={xP(i) - r - 5} y={yP(i) + 3.5} textAnchor="end" fontSize={8.5} fill="rgba(255,255,255,0.42)">{s.name || ''}</text>
-            <text x={xP(i) + r + 5} y={yP(i) + 3.5} fontSize={8.5} fill={color} fontFamily="IBM Plex Mono">{freqs[i]}</text>
+            <rect x={x} y={y} width={barW} height={h} fill={color} opacity={0.85} rx={1.5}>
+              <title>{`${s.name || 'Stop '+i}: ${freqs[i]} events`}</title>
+            </rect>
+            {freqs[i] > 0 && (
+              <text x={cx} y={y - 4} textAnchor="middle" fontSize={8} fill={color} fontFamily="IBM Plex Mono">{freqs[i]}</text>
+            )}
+            {showLabel && (
+              <text
+                x={cx} y={yS(0) + 8}
+                textAnchor="end"
+                transform={`rotate(-55, ${cx}, ${yS(0) + 8})`}
+                fontSize={8.5} fill="rgba(255,255,255,0.55)"
+              >{s.name || ''}</text>
+            )}
           </g>
         );
       })}
 
-      {/* N/S labels */}
-      <text x={xP(NUM_STOPS-1)+6} y={yP(NUM_STOPS-1)+3.5} fontSize={8} fill="rgba(255,255,255,0.2)">N</text>
-      <text x={xP(0)+6}           y={yP(0)+3.5}           fontSize={8} fill="rgba(255,255,255,0.2)">S</text>
+      {/* y-axis title */}
+      <text
+        x={-H / 2} y={11}
+        transform="rotate(-90)"
+        textAnchor="middle" fontSize={8.5} fill="rgba(255,255,255,0.4)"
+        letterSpacing="0.08em"
+      >EVENTS</text>
     </svg>
   );
 };
@@ -1056,8 +1220,8 @@ const ParamDrawer = ({ params, setP, onApply, applying, routeCatalog }) => {
           <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 5 }}>Route</div>
           <select value={route} onChange={e => setP(p => ({ ...p, route: e.target.value }))} style={sel}>
             {routeIds.length === 0
-              ? <option value={route}>Route {route}</option>
-              : routeIds.map(r => <option key={r} value={r}>Route {r}</option>)}
+              ? <option value={route}>Route {route}{ROUTE_META[route] ? ` — ${ROUTE_META[route].name}` : ''}</option>
+              : routeIds.map(r => <option key={r} value={r}>Route {r}{ROUTE_META[r] ? ` — ${ROUTE_META[r].name}` : ''}</option>)}
           </select>
         </div>
 
@@ -1078,14 +1242,14 @@ const ParamDrawer = ({ params, setP, onApply, applying, routeCatalog }) => {
         <div style={{ marginBottom: 14 }}>
           <div style={{ fontSize: 11, color: 'var(--t3)', marginBottom: 5 }}>Direction</div>
           <div style={{ display: 'flex', gap: 6 }}>
-            {['Northbound','Southbound'].map(d => (
+            {directionsFor(route).map(d => (
               <button key={d} onClick={() => setP(p => ({ ...p, dir: d }))} style={{
                 flex: 1, padding: '6px 0', border: '1px solid', borderRadius: 6, cursor: 'pointer', fontSize: 11,
-                borderColor: dir === d ? (d === 'Northbound' ? 'var(--acc2)' : '#A78BFA') : 'var(--border)',
-                background: dir === d ? (d === 'Northbound' ? 'rgba(27,184,176,0.1)' : 'rgba(167,139,250,0.1)') : 'transparent',
-                color: dir === d ? (d === 'Northbound' ? 'var(--acc2)' : '#A78BFA') : 'var(--t3)',
+                borderColor: dir === d ? DIR_COLOR[d] : 'var(--border)',
+                background:  dir === d ? DIR_BG[d]    : 'transparent',
+                color:       dir === d ? DIR_COLOR[d] : 'var(--t3)',
                 transition: 'all 0.14s',
-              }}>{d === 'Northbound' ? '↑ NB' : '↓ SB'}</button>
+              }}>{DIR_SHORT[d] || d}</button>
             ))}
           </div>
         </div>
@@ -1169,6 +1333,21 @@ const App = () => {
     document.documentElement.style.setProperty('--accent', TWEAK_DEFAULTS.accentColor);
   }, []);
 
+  // If the selected route doesn't support the current direction label
+  // (e.g. switching from Dufferin → King leaves "Northbound" stale),
+  // snap to a direction that both (a) is valid for the route and (b) has
+  // data in the catalog. Prefer catalog-available direction_ids.
+  useEffect(() => {
+    if (!params.route) return;
+    const valid = directionsFor(params.route);
+    if (valid.includes(params.dir)) return;
+    const availIds = routeCatalog
+      .filter(r => r.route_id === params.route)
+      .map(r => r.direction_id);
+    const pick = availIds.length > 0 ? valid[availIds[0]] : valid[0];
+    setParams(p => ({ ...p, dir: pick || valid[0] }));
+  }, [params.route, routeCatalog]);
+
   // Load route catalog once; default to the first (route, dir, most-recent date).
   useEffect(() => {
     loadRouteCatalog().then(cat => {
@@ -1176,11 +1355,12 @@ const App = () => {
       if (cat.length > 0) {
         const first = cat[0];
         const date = (first.service_dates && first.service_dates[0]) || '';
+        const labels = directionsFor(first.route_id);
         setParams(p => ({
           ...p,
           route: first.route_id,
           date,
-          dir: first.direction_id === 1 ? 'Northbound' : 'Southbound',
+          dir: labels[first.direction_id] || labels[0],
         }));
       }
     });
@@ -1190,7 +1370,7 @@ const App = () => {
   // chips in Parameters stay in sync without requiring Apply.
   useEffect(() => {
     if (!params.route) return;
-    loadStopsOnly(params.route, directionIdFor(params.dir)).then(() => {
+    loadStopsOnly(params.route, directionIdFor(params.dir, params.route)).then(() => {
       setStopsVersion(v => v + 1);
     });
   }, [params.route, params.dir]);
@@ -1223,6 +1403,43 @@ const App = () => {
     }
   }, [params.route, params.date]);  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // LIVE auto-refresh. When the selected date is "today" (Toronto TZ),
+  // silently re-hit /iroam/buses + /iroam/analytics every 25 s so new
+  // trajectories and anomalies appear without user action. Does NOT touch
+  // `applying` (no spinner) or `loadError` (keep last-good on failure).
+  const isLive = params.date && params.date === todayInToronto();
+  const sliceKey = `${params.route}|${params.date}|${params.dir}`;
+  const refreshGen = useRef(0);
+  useEffect(() => {
+    if (!isLive || !params.route || !params.date) return;
+    const tick = async () => {
+      const myGen = ++refreshGen.current;
+      try {
+        const direction_id = directionIdFor(params.dir, params.route);
+        const qs =
+          `route_id=${encodeURIComponent(params.route)}` +
+          `&service_date=${params.date}` +
+          `&direction_id=${direction_id}` +
+          `&bunch_sec=${params.bunchInt}` +
+          `&idle_min=${params.idleMin}` +
+          `&crowd_pct=${params.crowdPct}`;
+        const [busesRes, analyticsRes] = await Promise.all([
+          fetchJSON(`/iroam/buses?${qs}`),
+          fetchJSON(`/iroam/analytics?${qs}`),
+        ]);
+        if (refreshGen.current !== myGen) return;   // stale
+        applyStopsAndWindow(null, busesRes.time_window);
+        setBusData(busesRes.buses || []);
+        setAnalytics(analyticsRes || null);
+        setTotals(busesRes.totals || { bunch:0, idle:0, crowd:0 });
+      } catch (err) {
+        console.warn('iroam LIVE refresh failed', err);
+      }
+    };
+    const id = setInterval(tick, 25000);
+    return () => clearInterval(id);
+  }, [isLive, sliceKey, params.bunchInt, params.idleMin, params.crowdPct]);
+
   const handleSetPage = p => { setPage(p); if (p === 'params') setDrawerOpen(false); };
 
   return (
@@ -1230,7 +1447,7 @@ const App = () => {
       <Sidebar active={page} setActive={handleSetPage} />
       <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
         <TopBar page={page} route={params.route} date={params.date} dir={params.dir} totals={totals}
-          drawerOpen={drawerOpen} setDrawerOpen={setDrawerOpen} />
+          drawerOpen={drawerOpen} setDrawerOpen={setDrawerOpen} isLive={isLive} />
         {loadError && (
           <div style={{ background:'rgba(255,90,90,0.14)', color:'var(--idle)', padding:'6px 22px', fontSize:12, borderBottom:'1px solid var(--border)' }}>
             Load error: {loadError}
@@ -1239,7 +1456,7 @@ const App = () => {
         <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
           <div style={{ flex:1, overflow:'hidden' }}>
             {page === 'params'   && <ParameterPanel params={params} setP={setParams} onApply={handleApply} applying={applying} routeCatalog={routeCatalog} stopsVersion={stopsVersion} />}
-            {page === 'playback' && <PlaybackPage busData={busData} />}
+            {page === 'playback' && <PlaybackPage busData={busData} sliceKey={sliceKey} />}
             {page === 'analysis' && <AnalyticsPage analytics={analytics} route={params.route} date={params.date} />}
           </div>
           {page !== 'params' && drawerOpen && (
