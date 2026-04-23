@@ -24,6 +24,8 @@ dependencies = [
     "altair>=5.3,<6",
     "shapely>=2.0,<3",
     "pyproj>=3.6,<4",
+    "lightgbm>=4,<5",
+    "numpy>=1.24",
 ]
 
 [project.optional-dependencies]
@@ -39,7 +41,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["apps*", "core*", "db*"]
+include = ["apps*", "core*", "db*", "deployment*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

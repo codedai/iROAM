@@ -13,7 +13,7 @@ WORKDIR /app
 
 # System deps: psycopg needs libpq; curl is handy for container healthchecks.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libpq5 curl \
+    && apt-get install -y --no-install-recommends libpq5 libgomp1 curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps first so source changes don't bust the dependency layer.
@@ -36,11 +36,14 @@ RUN pip install \
       'pandas>=2.2,<3' \
       'altair>=5.3,<6' \
       'shapely>=2.0,<3' \
-      'pyproj>=3.6,<4'
+      'pyproj>=3.6,<4' \
+      'lightgbm>=4,<5' \
+      'numpy>=1.24'
 
 COPY apps ./apps
 COPY core ./core
 COPY db ./db
+COPY deployment ./deployment
 COPY scripts ./scripts
 COPY alembic.ini ./alembic.ini
 

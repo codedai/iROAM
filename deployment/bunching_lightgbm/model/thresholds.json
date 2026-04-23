@@ -1,0 +1,182 @@
+{
+  "0": {
+    "threshold": 0.25,
+    "f2_val": 0.8984557791296209,
+    "best_iter": 145,
+    "positive_rate_train": 0.07772435897435898
+  },
+  "1": {
+    "threshold": 0.2,
+    "f2_val": 0.8187528039479588,
+    "best_iter": 184,
+    "positive_rate_train": 0.07620468611847922
+  },
+  "2": {
+    "threshold": 0.55,
+    "f2_val": 0.7702825888787604,
+    "best_iter": 22,
+    "positive_rate_train": 0.07512709991158267
+  },
+  "3": {
+    "threshold": 0.28,
+    "f2_val": 0.7104940792160065,
+    "best_iter": 13,
+    "positive_rate_train": 0.07559681697612732
+  },
+  "4": {
+    "threshold": 0.29000000000000004,
+    "f2_val": 0.6959706959706959,
+    "best_iter": 10,
+    "positive_rate_train": 0.07620468611847922
+  },
+  "5": {
+    "threshold": 0.22,
+    "f2_val": 0.6635257165292501,
+    "best_iter": 9,
+    "positive_rate_train": 0.07509946949602123
+  },
+  "6": {
+    "threshold": 0.22,
+    "f2_val": 0.6276971361318163,
+    "best_iter": 8,
+    "positive_rate_train": 0.07424292661361627
+  },
+  "7": {
+    "threshold": 0.23,
+    "f2_val": 0.6272189349112426,
+    "best_iter": 6,
+    "positive_rate_train": 0.07427055702917772
+  },
+  "8": {
+    "threshold": 0.24000000000000002,
+    "f2_val": 0.611178126256534,
+    "best_iter": 6,
+    "positive_rate_train": 0.07584549071618037
+  },
+  "9": {
+    "threshold": 0.22,
+    "f2_val": 0.5959752321981424,
+    "best_iter": 5,
+    "positive_rate_train": 0.07675729442970822
+  },
+  "10": {
+    "threshold": 0.2,
+    "f2_val": 0.5980861244019139,
+    "best_iter": 5,
+    "positive_rate_train": 0.07642572944297082
+  },
+  "11": {
+    "threshold": 0.2,
+    "f2_val": 0.5805687203791469,
+    "best_iter": 4,
+    "positive_rate_train": 0.07681255526083113
+  },
+  "12": {
+    "threshold": 0.23,
+    "f2_val": 0.5562200956937798,
+    "best_iter": 5,
+    "positive_rate_train": 0.07711648983200707
+  },
+  "13": {
+    "threshold": 0.18000000000000002,
+    "f2_val": 0.5401613468958261,
+    "best_iter": 4,
+    "positive_rate_train": 0.07772435897435898
+  },
+  "14": {
+    "threshold": 0.2,
+    "f2_val": 0.5543113101903696,
+    "best_iter": 4,
+    "positive_rate_train": 0.07822170645446508
+  },
+  "15": {
+    "threshold": 0.18000000000000002,
+    "f2_val": 0.5495274763738187,
+    "best_iter": 4,
+    "positive_rate_train": 0.07672966401414677
+  },
+  "16": {
+    "threshold": 0.2,
+    "f2_val": 0.561377245508982,
+    "best_iter": 4,
+    "positive_rate_train": 0.07587312113174183
+  },
+  "17": {
+    "threshold": 0.2,
+    "f2_val": 0.546611755896668,
+    "best_iter": 4,
+    "positive_rate_train": 0.07462975243147657
+  },
+  "18": {
+    "threshold": 0.16,
+    "f2_val": 0.5274400262898457,
+    "best_iter": 4,
+    "positive_rate_train": 0.07490605658709107
+  },
+  "19": {
+    "threshold": 0.17,
+    "f2_val": 0.5159883720930232,
+    "best_iter": 3,
+    "positive_rate_train": 0.07468501326259946
+  },
+  "20": {
+    "threshold": 0.17,
+    "f2_val": 0.5279169649248389,
+    "best_iter": 3,
+    "positive_rate_train": 0.07493368700265252
+  },
+  "21": {
+    "threshold": 0.16,
+    "f2_val": 0.5087897227856659,
+    "best_iter": 3,
+    "positive_rate_train": 0.07537577365163572
+  },
+  "22": {
+    "threshold": 0.16,
+    "f2_val": 0.5059812479793081,
+    "best_iter": 3,
+    "positive_rate_train": 0.07570733863837312
+  },
+  "23": {
+    "threshold": 0.19,
+    "f2_val": 0.510505581089954,
+    "best_iter": 4,
+    "positive_rate_train": 0.07789014146772767
+  },
+  "24": {
+    "threshold": 0.14,
+    "f2_val": 0.5059171597633135,
+    "best_iter": 3,
+    "positive_rate_train": 0.07855327144120247
+  },
+  "25": {
+    "threshold": 0.15000000000000002,
+    "f2_val": 0.5128597672994489,
+    "best_iter": 3,
+    "positive_rate_train": 0.07775198938992042
+  },
+  "26": {
+    "threshold": 0.16,
+    "f2_val": 0.4933246499511559,
+    "best_iter": 3,
+    "positive_rate_train": 0.07753094606542882
+  },
+  "27": {
+    "threshold": 0.14,
+    "f2_val": 0.48762522097819677,
+    "best_iter": 3,
+    "positive_rate_train": 0.07794540229885058
+  },
+  "28": {
+    "threshold": 0.16,
+    "f2_val": 0.4823717948717948,
+    "best_iter": 3,
+    "positive_rate_train": 0.07692307692307693
+  },
+  "29": {
+    "threshold": 0.14,
+    "f2_val": 0.4658952496954933,
+    "best_iter": 3,
+    "positive_rate_train": 0.07719938107869143
+  }
+}

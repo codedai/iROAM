@@ -43,6 +43,8 @@ from apps.analytics.stop_projection import (
     distance_to_stop_index,
 )
 from apps.api.deps import get_db
+from apps.api.services.bunching_predictor import PredictorUnavailable
+from apps.api.services.forecast import run_forecast
 from db.queries.iroam import fetch_trajectories_for_slice, list_route_catalog
 
 router = APIRouter(prefix="/iroam", tags=["iroam"])
@@ -296,6 +298,76 @@ def iroam_analytics(
             "crowd": stop_freq_crowd,
         },
         "allocation_by_hour": allocation,
+    }
+
+
+@router.get("/forecast")
+def iroam_forecast(
+    route_id: str = Query(...),
+    service_date: date = Query(...),
+    direction_id: int = Query(..., ge=0, le=1),
+    t_ref_min: float = Query(
+        ...,
+        ge=0.0,
+        le=1440.0,
+        description="Reference time as minute-of-day (America/Toronto). "
+        "Live mode: use latest /iroam/buses time_window.end. "
+        "Historical mode: use current playhead.",
+    ),
+    freshness_s: float = Query(default=90.0, ge=10.0, le=600.0),
+    edge_exclude: int = Query(default=2, ge=0, le=25),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Per-bus + aggregate bunching-risk forecast for one (route, date, direction).
+
+    Runs the bundled LightGBM predictor (see ``deployment/bunching_lightgbm``)
+    over every "running" bus in the slice: fresh sample, inside the active-stop
+    band, enough history to fill a 60-tick × 9-channel window. Returns per-bus
+    probability horizons + two aggregate series (``any_alert_rate`` and
+    ``mean_prob``) sized to the model's 30-step horizon.
+
+    Shape is stable across modes; the frontend passes the same payload shape
+    into its Forecast panel whether this is live or historical.
+    """
+    route_stops = compute_route_stops(route_id, direction_id)
+    if route_stops is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no static-GTFS shape for route_id={route_id} direction_id={direction_id}",
+        )
+
+    rows = fetch_trajectories_for_slice(
+        db, service_date=service_date, route_id=route_id, direction_id=direction_id
+    )
+    buses = _group_into_buses(rows, route_stops)
+
+    try:
+        result = run_forecast(
+            buses,
+            num_stops=len(route_stops.stops),
+            t_ref_min=t_ref_min,
+            freshness_s=freshness_s,
+            edge_exclude=edge_exclude,
+        )
+    except PredictorUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"bunching predictor unavailable: {exc}",
+        ) from exc
+
+    return {
+        "route_id": route_id,
+        "service_date": service_date.isoformat(),
+        "direction_id": direction_id,
+        "t_ref_min": result.t_ref_min,
+        "horizon_steps": result.horizon_steps,
+        "step_seconds": result.step_seconds,
+        "thresholds": result.thresholds,
+        "num_buses_total": result.num_buses_total,
+        "num_running": result.num_running,
+        "num_eligible": result.num_eligible,
+        "per_bus": result.per_bus,
+        "horizon_summary": result.horizon_summary,
     }
 
 

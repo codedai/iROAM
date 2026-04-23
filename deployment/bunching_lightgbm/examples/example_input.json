@@ -1,0 +1,40 @@
+{
+  "note": "Scaled 60\u00d79 window from the chrono test split (index 0). Channels 0-2 target bus, 3-5 upstream#1, 6-8 upstream#2.",
+  "shape": [
+    60,
+    9
+  ],
+  "ground_truth_any_bunching_in_next_30_steps": 0,
+  "ground_truth_per_horizon": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "model_type": "per_horizon_lightgbm",
+  "framework": "lightgbm",
+  "lightgbm_version": "4.6.0",
+  "numpy_version": "2.2.3",
+  "trained_at": "2026-04-23T05:49:02Z",
+  "seq_len": 60,
+  "pred_len": 30,
+  "step": 2,
+  "n_channels": 9,
+  "n_features": 540,
+  "variant": "matched",
+  "data_root": "/home/jiahao/Documents/iroam_qt/filtered/training_data/chrono",
+  "seed": 2021,
+  "hyperparameters": {
+    "n_estimators": 300,
+    "max_depth": -1,
+    "num_leaves": 63,
+    "learning_rate": 0.05,
+    "min_child_samples": 50,
+    "early_stopping_rounds": 20
+  }
+}
