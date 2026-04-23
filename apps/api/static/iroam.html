@@ -531,15 +531,53 @@ const ParameterPanel = ({ params, setP, onApply, applying, routeCatalog, stopsVe
 // ─────────────────────────────────────────────────────────────────────────────
 const SPEED_OPTIONS = [0.5, 1, 2, 4];
 
-const PlaybackPage = ({ busData, sliceKey }) => {
+const PlaybackPage = ({ busData, sliceKey, isLive, route, serviceDate, directionId, liveTimeWindowEnd }) => {
   const [playing, setPlaying] = useState(false);
   const [t, setT] = useState(START_T);
   const [vis, setVis] = useState({ bunch: true, idle: true, crowd: true });
   const [mapW, setMapW] = useState(270);
   const [dragging, setDragging] = useState(false);
   const [speed, setSpeed] = useState(1);
+  const [forecastOpen, setForecastOpen] = useState(false);
+  const [forecasting, setForecasting] = useState(false);
+  const [forecast, setForecast] = useState(null);
+  const [forecastError, setForecastError] = useState(null);
   const chartRef = useRef(null);
   const rafRef = useRef(null);
+
+  // Close & drop any stale forecast the moment the slice changes.
+  useEffect(() => {
+    setForecastOpen(false); setForecast(null); setForecastError(null);
+  }, [sliceKey]);
+
+  const runForecast = async () => {
+    if (!route || !serviceDate) return;
+    // t_ref: live mode pins to the backend's latest reported minute so the
+    // request is never ahead of what the model has evidence for. Historical
+    // mode uses the current playhead (paused or not — either case shows the
+    // user what they're looking at).
+    const t_ref = isLive
+      ? (liveTimeWindowEnd != null ? liveTimeWindowEnd : t)
+      : t;
+    setForecasting(true);
+    setForecastOpen(true);
+    setForecastError(null);
+    try {
+      const qs =
+        `route_id=${encodeURIComponent(route)}` +
+        `&service_date=${serviceDate}` +
+        `&direction_id=${directionId}` +
+        `&t_ref_min=${encodeURIComponent(t_ref.toFixed(3))}`;
+      const payload = await fetchJSON(`/iroam/forecast?${qs}`);
+      setForecast(adaptForecast(payload));
+    } catch (err) {
+      console.warn('forecast failed', err);
+      setForecastError(String(err && err.message || err));
+      setForecast(null);
+    } finally {
+      setForecasting(false);
+    }
+  };
 
   useEffect(() => {
     if (!dragging) return;
@@ -652,6 +690,18 @@ const PlaybackPage = ({ busData, sliceKey }) => {
             <AnomalyPill key={k} type={k} active={vis[k]} onClick={() => setVis(v => ({ ...v, [k]: !v[k] }))} />
           ))}
         </div>
+
+        <button onClick={runForecast} disabled={forecasting || !route || !serviceDate} style={{
+          padding:'0 12px', height:30, borderRadius:7,
+          border:'1px solid', borderColor: forecastOpen ? 'var(--accent)' : 'var(--border)',
+          background: forecastOpen ? 'linear-gradient(180deg, rgba(224,123,50,0.22), rgba(224,123,50,0.08))' : 'var(--s2)',
+          color: forecastOpen ? 'var(--accent)' : 'var(--t1)',
+          cursor: forecasting ? 'wait' : 'pointer', fontSize:12, fontWeight:600,
+          display:'flex', alignItems:'center', gap:7, transition:'all 0.15s',
+        }}>
+          <span style={{ fontSize:13, lineHeight:1 }}>{forecasting ? '◐' : '◔'}</span>
+          {forecasting ? 'Forecasting…' : 'Forecast Bunching'}
+        </button>
       </div>
 
       {/* Chart area */}
@@ -679,6 +729,276 @@ const PlaybackPage = ({ busData, sliceKey }) => {
           <SchematicMap busData={busData} currentT={t} vis={vis} width={mapW} />
         </div>
       </div>
+      {forecastOpen && (
+        <ForecastPanel
+          forecast={forecast}
+          forecasting={forecasting}
+          forecastError={forecastError}
+          isLive={isLive}
+          fmt={fmt}
+          onClose={() => setForecastOpen(false)}
+        />
+      )}
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FORECAST PANEL
+// ─────────────────────────────────────────────────────────────────────────────
+// Translate the backend /iroam/forecast payload into the shape the panel
+// renders. any_alert_rate is a per-horizon fraction of eligible buses that
+// trip at least one threshold; mean_prob is the cross-bus mean probability.
+// We render any_alert_rate as the main curve and ±6 pp around mean_prob as
+// a spread band (spread only — not a calibrated confidence interval).
+function adaptForecast(payload) {
+  const stepMin = (payload.step_seconds || 10) / 60;
+  const tRef = payload.t_ref_min;
+  const alertRate = payload.horizon_summary?.any_alert_rate || [];
+  const meanProb  = payload.horizon_summary?.mean_prob || [];
+  const H = Math.max(alertRate.length, meanProb.length);
+  const horizon = Array.from({ length: H }, (_, i) => {
+    const rate = (alertRate[i] ?? 0) * 100;
+    const mean = (meanProb[i]  ?? 0) * 100;
+    return {
+      t: tRef + i * stepMin,
+      rate,
+      lo: Math.max(0, mean - 6),
+      hi: Math.min(100, mean + 6),
+    };
+  });
+  const peakRate = horizon.length ? Math.max(...horizon.map(h => h.rate)) : 0;
+  const peakIdx  = horizon.findIndex(h => h.rate === peakRate);
+  const peakAt   = peakIdx >= 0 ? horizon[peakIdx].t : tRef;
+
+  const perBus = payload.per_bus || [];
+  const eligible = perBus.filter(b => b.eligible);
+  const ineligible = perBus.filter(b => !b.eligible);
+  const busRisks = eligible
+    .slice()
+    .sort((a, b) => (b.max_prob ?? 0) - (a.max_prob ?? 0))
+    .slice(0, 6)
+    .map(b => ({
+      id: b.bus_id,
+      vehicle_id: b.vehicle_id,
+      stop_idx: b.stop_idx ?? 0,
+      risk: Math.round((b.max_prob ?? 0) * 100),
+      first_step: b.first_alert_step,
+      step_seconds: payload.step_seconds || 10,
+    }));
+  // Bucket ineligibles by reason for the collapsed pill.
+  const reasonBuckets = {};
+  for (const b of ineligible) {
+    const key = (b.ineligible_reason || 'unknown').split(':')[0].trim();
+    reasonBuckets[key] = (reasonBuckets[key] || 0) + 1;
+  }
+  return {
+    horizon, peakRate, peakAt,
+    fromT: tRef,
+    horizonMin: Math.round(H * stepMin),
+    busRisks,
+    ineligible,
+    reasonBuckets,
+    numEligible: payload.num_eligible ?? eligible.length,
+    numRunning: payload.num_running ?? 0,
+    numTotal: payload.num_buses_total ?? perBus.length,
+  };
+}
+
+const ForecastPanel = ({ forecast, forecasting, forecastError, isLive, fmt, onClose }) => {
+  const [showExcluded, setShowExcluded] = useState(false);
+  return (
+    <div style={{
+      height: 260, flexShrink: 0, display: 'flex',
+      borderTop: '1px solid var(--border)',
+      background: 'linear-gradient(180deg, rgba(224,123,50,0.04), var(--s1) 60%)',
+      animation: 'slideUp 0.22s ease',
+    }}>
+      <style>{`@keyframes slideUp { from { transform: translateY(12px); opacity: 0 } to { transform: none; opacity: 1 } }`}</style>
+
+      {/* Header rail */}
+      <div style={{ width: 230, padding: '14px 16px', borderRight: '1px solid var(--border)',
+        display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+          <div style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--t3)', fontWeight: 600 }}>
+            Bunching Forecast
+          </div>
+          <button onClick={onClose} style={{
+            width:22, height:22, borderRadius:5, border:'1px solid var(--border)',
+            background:'transparent', color:'var(--t3)', cursor:'pointer', fontSize:11,
+            display:'flex', alignItems:'center', justifyContent:'center',
+          }}>✕</button>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--t3)', lineHeight: 1.5 }}>
+          LightGBM per-horizon · 5-min horizon<br/>
+          {isLive ? 'LIVE — t_ref pinned to latest slice' : 'historical — t_ref at playhead'}
+        </div>
+        {forecasting ? (
+          <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 11, color: 'var(--accent)' }}>
+            ◐ Computing…
+          </div>
+        ) : forecastError ? (
+          <div style={{ fontSize: 11, color: 'var(--idle)', lineHeight: 1.4 }}>
+            Forecast failed:<br/>{forecastError}
+          </div>
+        ) : forecast ? (
+          <>
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--t3)', marginBottom: 2 }}>PEAK ALERT RATE</div>
+              <div style={{ fontFamily: 'IBM Plex Mono', fontSize: 26, fontWeight: 600, color: 'var(--bunch)' }}>
+                {forecast.peakRate.toFixed(0)}<span style={{ fontSize: 14, color: 'var(--t3)' }}>%</span>
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--t3)' }}>
+                at {fmt(forecast.peakAt)} · +{Math.max(0, Math.round(forecast.peakAt - forecast.fromT))}min
+              </div>
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--t3)', lineHeight: 1.6 }}>
+              <div>t_ref &nbsp;<span style={{ fontFamily:'IBM Plex Mono', color:'var(--t2)' }}>{fmt(forecast.fromT)}</span></div>
+              <div>{forecast.numEligible} eligible / {forecast.numRunning} running / {forecast.numTotal} total</div>
+            </div>
+            <div style={{ marginTop: 'auto', fontSize: 10, color: 'var(--t3)' }}>
+              confidence — <span style={{ color: 'var(--t3)' }}>not reported</span>
+            </div>
+          </>
+        ) : null}
+      </div>
+
+      {/* Time-series forecast curve */}
+      <div style={{ flex: 1.4, padding: '10px 16px', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <div style={{ fontSize: 11, color: 'var(--t2)', marginBottom: 4 }}>
+          Predicted bunching alert rate — next 5 min
+        </div>
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <ForecastCurve forecast={forecast} forecasting={forecasting} fmt={fmt} />
+        </div>
+      </div>
+
+      {/* At-risk buses + excluded */}
+      <div style={{ flex: 1, padding: '10px 16px', minWidth: 0, overflow: 'auto', display:'flex', flexDirection:'column', gap:10 }}>
+        <div>
+          <div style={{ fontSize: 11, color: 'var(--t2)', marginBottom: 6 }}>At-risk vehicles</div>
+          {forecasting || !forecast ? (
+            <div style={{ color: 'var(--t3)', fontSize: 11 }}>—</div>
+          ) : forecast.busRisks.length === 0 ? (
+            <div style={{ color: 'var(--t3)', fontSize: 11 }}>No eligible buses at this t_ref.</div>
+          ) : forecast.busRisks.map(b => {
+            const color = b.risk >= 70 ? 'var(--bunch)' : b.risk >= 45 ? 'var(--idle)' : 'var(--acc2)';
+            const firstMin = b.first_step != null
+              ? `+${Math.round(b.first_step * b.step_seconds / 60 * 10) / 10}m`
+              : '—';
+            return (
+              <div key={b.id} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:5, fontSize:11 }}>
+                <div style={{ width:6, height:6, borderRadius:'50%', background:color, flexShrink:0 }} />
+                <div style={{ fontFamily:'IBM Plex Mono', color:'var(--t1)', width:70, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                  #{b.vehicle_id || b.id}
+                </div>
+                <div style={{ flex:1, color:'var(--t3)', fontSize:10 }}>
+                  stop {Math.floor(b.stop_idx)+1} / {NUM_STOPS} · 1st {firstMin}
+                </div>
+                <div style={{ fontFamily:'IBM Plex Mono', color, width:36, textAlign:'right', fontWeight:600 }}>
+                  {b.risk}%
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {forecast && forecast.ineligible.length > 0 && (
+          <div>
+            <button
+              onClick={() => setShowExcluded(v => !v)}
+              style={{
+                background:'transparent', border:'1px solid var(--border)', borderRadius:6,
+                padding:'3px 8px', color:'var(--t3)', fontSize:10, cursor:'pointer',
+                display:'flex', alignItems:'center', gap:6,
+              }}
+            >
+              <span>⊘ {forecast.ineligible.length} excluded</span>
+              <span style={{ fontFamily:'IBM Plex Mono', color:'var(--t3)' }}>
+                {Object.entries(forecast.reasonBuckets).map(([k,v]) => `${k}:${v}`).join(' · ')}
+              </span>
+              <span>{showExcluded ? '▾' : '▸'}</span>
+            </button>
+            {showExcluded && (
+              <div style={{ marginTop:6, maxHeight:110, overflow:'auto',
+                border:'1px solid var(--border)', borderRadius:6, padding:'6px 8px' }}>
+                {forecast.ineligible.map(b => (
+                  <div key={b.bus_id} style={{ display:'flex', gap:8, fontSize:10.5, color:'var(--t3)', marginBottom:3 }}>
+                    <div style={{ fontFamily:'IBM Plex Mono', width:70, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', color:'var(--t2)' }}>
+                      #{b.vehicle_id || b.bus_id}
+                    </div>
+                    <div style={{ flex:1 }}>{b.ineligible_reason || 'unknown'}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const ForecastCurve = ({ forecast, forecasting, fmt }) => {
+  const ref = useRef(null);
+  const [dims, setDims] = useState({ w: 400, h: 160 });
+  useEffect(() => {
+    if (!ref.current) return;
+    const obs = new ResizeObserver(([e]) => {
+      setDims({ w: Math.max(e.contentRect.width, 200), h: Math.max(e.contentRect.height, 100) });
+    });
+    obs.observe(ref.current);
+    return () => obs.disconnect();
+  }, []);
+  const { w: W, h: H } = dims;
+  const PAD = { top: 12, right: 16, bottom: 22, left: 32 };
+  if (forecasting || !forecast || forecast.horizon.length === 0) {
+    return (
+      <div ref={ref} style={{ width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'center', color:'var(--t3)', fontSize:11 }}>
+        {forecasting ? '◐ Running model…' : 'Click Forecast to predict'}
+      </div>
+    );
+  }
+  const h = forecast.horizon;
+  const tMin = h[0].t, tMax = h[h.length-1].t;
+  // Round vMax up to nearest 10 but clamp at 100 (rate is a %).
+  const dataMax = Math.max(...h.map(p => p.hi));
+  const vMax = Math.min(100, Math.max(20, Math.ceil(dataMax / 10) * 10));
+  const xS = t => PAD.left + (t - tMin) / Math.max(1e-6, (tMax - tMin)) * (W - PAD.left - PAD.right);
+  const yS = v => PAD.top + (1 - v / vMax) * (H - PAD.top - PAD.bottom);
+  const linePath = h.map((p, i) => `${i===0?'M':'L'}${xS(p.t).toFixed(1)},${yS(p.rate).toFixed(1)}`).join(' ');
+  const bandPath =
+    h.map((p, i) => `${i===0?'M':'L'}${xS(p.t).toFixed(1)},${yS(p.hi).toFixed(1)}`).join(' ') +
+    ' ' +
+    h.slice().reverse().map(p => `L${xS(p.t).toFixed(1)},${yS(p.lo).toFixed(1)}`).join(' ') +
+    ' Z';
+  const yTicks = [0, 25, 50, 75, 100].filter(v => v <= vMax);
+  // 1-min ticks across the 5-min horizon, plus endpoints.
+  const xTicks = [];
+  for (let m = Math.ceil(tMin); m <= Math.floor(tMax); m += 1) xTicks.push(m);
+  if (!xTicks.length) xTicks.push(tMin, tMax);
+
+  return (
+    <div ref={ref} style={{ width:'100%', height:'100%' }}>
+      <svg width={W} height={H} style={{ display:'block' }}>
+        {yTicks.map(v => (
+          <g key={v}>
+            <line x1={PAD.left} x2={W-PAD.right} y1={yS(v)} y2={yS(v)} stroke="rgba(255,255,255,0.05)" />
+            <text x={PAD.left-6} y={yS(v)+3} textAnchor="end" fontSize={9} fill="rgba(255,255,255,0.35)" fontFamily="IBM Plex Mono">{v}</text>
+          </g>
+        ))}
+        {xTicks.map(tk => (
+          <text key={tk} x={xS(tk)} y={H-PAD.bottom+14} textAnchor="middle" fontSize={9} fill="rgba(255,255,255,0.4)" fontFamily="IBM Plex Mono">{fmt(tk)}</text>
+        ))}
+        {/* Mean-prob ±6pp spread band */}
+        <path d={bandPath} fill="var(--bunch)" opacity={0.12} />
+        {/* Alert-rate line */}
+        <path d={linePath} fill="none" stroke="var(--bunch)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        {/* Peak marker */}
+        <circle cx={xS(forecast.peakAt)} cy={yS(forecast.peakRate)} r={4} fill="var(--bunch)" stroke="var(--bg)" strokeWidth={1.5} />
+        <text x={xS(forecast.peakAt)} y={yS(forecast.peakRate)-8} textAnchor="middle" fontSize={9}
+          fill="var(--bunch)" fontFamily="IBM Plex Mono" fontWeight="600">{forecast.peakRate.toFixed(0)}%</text>
+      </svg>
     </div>
   );
 };
@@ -1390,6 +1710,10 @@ const App = () => {
   const [stopsVersion, setStopsVersion] = useState(0);
   const [loadError, setLoadError] = useState(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Latest reported trailing edge of the live slice (minute-of-day).
+  // Forecast in LIVE mode pins t_ref here, not to the playhead, so the
+  // model sees what the backend actually has evidence for.
+  const [liveTimeWindowEnd, setLiveTimeWindowEnd] = useState(null);
 
   useEffect(() => {
     document.documentElement.style.setProperty('--accent', TWEAK_DEFAULTS.accentColor);
@@ -1446,6 +1770,7 @@ const App = () => {
         setBusData(busesRes.buses || []);
         setAnalytics(analyticsRes || null);
         setTotals(busesRes.totals || { bunch:0, idle:0, crowd:0 });
+        setLiveTimeWindowEnd(busesRes.time_window?.end ?? null);
         setStopsVersion(v => v + 1);
       })
       .catch(err => {
@@ -1494,6 +1819,7 @@ const App = () => {
         setBusData(busesRes.buses || []);
         setAnalytics(analyticsRes || null);
         setTotals(busesRes.totals || { bunch:0, idle:0, crowd:0 });
+        setLiveTimeWindowEnd(busesRes.time_window?.end ?? null);
       } catch (err) {
         console.warn('iroam LIVE refresh failed', err);
       }
@@ -1518,7 +1844,15 @@ const App = () => {
         <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
           <div style={{ flex:1, overflow:'hidden' }}>
             {page === 'params'   && <ParameterPanel params={params} setP={setParams} onApply={handleApply} applying={applying} routeCatalog={routeCatalog} stopsVersion={stopsVersion} />}
-            {page === 'playback' && <PlaybackPage busData={busData} sliceKey={sliceKey} />}
+            {page === 'playback' && <PlaybackPage
+              busData={busData}
+              sliceKey={sliceKey}
+              isLive={isLive}
+              route={params.route}
+              serviceDate={params.date}
+              directionId={directionIdFor(params.dir, params.route)}
+              liveTimeWindowEnd={liveTimeWindowEnd}
+            />}
             {page === 'analysis' && <AnalyticsPage analytics={analytics} route={params.route} date={params.date} />}
           </div>
           {page !== 'params' && drawerOpen && (
