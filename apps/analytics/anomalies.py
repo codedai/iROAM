@@ -4,7 +4,9 @@ Produces the three event types the iROAM dashboard renders:
 
   * ``idle``  — bus stationary for ≥ ``idle_min_threshold`` minutes
   * ``bunch`` — two consecutive trip instances pass the same point within
-                ≤ ``bunch_seconds_threshold`` of each other
+                ≤ ``bunch_seconds_threshold`` of each other (``method="time"``),
+                **or** along-route separation < ``bunch_distance_threshold_m``
+                for a contiguous stretch (``method="distance"``).
   * ``crowd`` — a point's GTFS-RT OccupancyStatus maps to ≥ ``crowd_pct_threshold``
 
 Input is a list of ``BusTrajectory`` rows (one per trip instance) with their
@@ -17,6 +19,7 @@ unit-test and cheap to re-run on every threshold change.
 
 from __future__ import annotations
 
+import bisect
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
@@ -36,6 +39,8 @@ OCCUPANCY_PCT = {
 }
 
 AnomalyType = Literal["bunch", "idle", "crowd"]
+BunchMethod = Literal["time", "distance"]
+BunchMethodSelector = Literal["time", "distance", "both"]
 
 
 @dataclass(frozen=True)
@@ -62,6 +67,9 @@ class AnomalyEvent:
     minute_of_day: float    # time in minutes since midnight (UTC), float for sub-minute precision
     stop_index: float
     type: AnomalyType
+    # Only meaningful when ``type == "bunch"`` — distinguishes the time-gap
+    # detector from the along-route-distance detector. None for idle/crowd.
+    method: BunchMethod | None = None
 
 
 def _to_minute_of_day(dt: datetime) -> float:
@@ -199,9 +207,123 @@ def detect_bunch_events(
                         minute_of_day=_to_minute_of_day(b[0]),
                         stop_index=b[2],
                         type="bunch",
+                        method="time",
                     )
                 )
     return events
+
+
+def detect_bunch_events_distance(
+    buses: list[BusTrajectory],
+    *,
+    bunch_distance_threshold_m: float,
+    grid_seconds: float = 30.0,
+) -> list[AnomalyEvent]:
+    """Flag pairs of buses whose along-route separation stays < threshold.
+
+    Strategy: sweep a uniform time grid (default 30 s, matches GTFS-RT cadence).
+    At each tick, for every bus active at that tick, linearly interpolate
+    ``travel_distance_m`` and ``stop_index``. Sort active buses by distance and
+    check each consecutive (follower, leader) pair — their along-route gap is
+    ``leader.dist - follower.dist``. When the same ordered pair stays inside
+    the threshold across consecutive ticks we treat it as one contiguous run;
+    on run-end we emit a single event tagged on the follower at the run's
+    time/stop midpoint.
+
+    Tagging the *follower* (trailing bus, lower ``travel_distance_m``) matches
+    the time-based detector, which tags the later-arriving bus at the stop.
+    """
+    events: list[AnomalyEvent] = []
+    if not buses:
+        return events
+
+    # Per-bus sorted arrays for O(log n) linear interpolation.
+    tracks: list[tuple[int, list[float], list[float], list[float]]] = []
+    for bus in buses:
+        if len(bus.points) < 2:
+            continue
+        ts = [p.datetime.timestamp() for p in bus.points]
+        ds = [p.travel_distance_m for p in bus.points]
+        si = [p.stop_index for p in bus.points]
+        tracks.append((bus.bus_index, ts, ds, si))
+
+    if not tracks:
+        return events
+
+    t_min = min(ts[0] for _, ts, _, _ in tracks)
+    t_max = max(ts[-1] for _, ts, _, _ in tracks)
+    if t_max <= t_min or grid_seconds <= 0:
+        return events
+
+    tz = buses[0].points[0].datetime.tzinfo
+
+    # Open runs keyed by (follower_idx, leader_idx) → (start_t, start_si, last_t, last_si).
+    open_runs: dict[tuple[int, int], tuple[float, float, float, float]] = {}
+
+    def flush(key: tuple[int, int], run: tuple[float, float, float, float]) -> None:
+        start_t, start_si, last_t, last_si = run
+        mid_t = (start_t + last_t) / 2.0
+        mid_si = (start_si + last_si) / 2.0
+        events.append(
+            AnomalyEvent(
+                bus_index=key[0],  # follower
+                minute_of_day=_to_minute_of_day(datetime.fromtimestamp(mid_t, tz=tz)),
+                stop_index=mid_si,
+                type="bunch",
+                method="distance",
+            )
+        )
+
+    t = t_min
+    # +epsilon on the bound so the last tick isn't dropped by float drift.
+    while t <= t_max + 1e-9:
+        active: list[tuple[int, float, float]] = []  # (bus_index, dist, stop_idx)
+        for bus_idx, ts, ds, si in tracks:
+            if t < ts[0] or t > ts[-1]:
+                continue
+            active.append(
+                (bus_idx, _interp_sorted(t, ts, ds), _interp_sorted(t, ts, si))
+            )
+        active.sort(key=lambda r: r[1])
+
+        pairs_now: set[tuple[int, int]] = set()
+        for a, b in zip(active, active[1:]):
+            gap = b[1] - a[1]
+            if 0 < gap < bunch_distance_threshold_m:
+                key = (a[0], b[0])  # (follower, leader)
+                pairs_now.add(key)
+                prev = open_runs.get(key)
+                if prev is None:
+                    open_runs[key] = (t, a[2], t, a[2])
+                else:
+                    open_runs[key] = (prev[0], prev[1], t, a[2])
+
+        # Flush runs whose pair didn't re-appear this tick.
+        for key in list(open_runs.keys()):
+            if key not in pairs_now:
+                flush(key, open_runs.pop(key))
+
+        t += grid_seconds
+
+    # Flush any still-open runs at the end of the window.
+    for key, run in open_runs.items():
+        flush(key, run)
+
+    return events
+
+
+def _interp_sorted(t: float, ts: list[float], ys: list[float]) -> float:
+    """Linear interpolation on a sorted ``ts`` array; clamps at the endpoints."""
+    i = bisect.bisect_left(ts, t)
+    if i <= 0:
+        return ys[0]
+    if i >= len(ts):
+        return ys[-1]
+    t0, t1 = ts[i - 1], ts[i]
+    if t1 <= t0:
+        return ys[i - 1]
+    frac = (t - t0) / (t1 - t0)
+    return ys[i - 1] + frac * (ys[i] - ys[i - 1])
 
 
 def _interpolate_crossing_time(
@@ -228,13 +350,30 @@ def detect_all(
     bunch_seconds_threshold: float,
     idle_min_threshold: float,
     crowd_pct_threshold: float,
+    bunch_distance_threshold_m: float = 150.0,
+    bunch_method: BunchMethodSelector = "time",
 ) -> list[AnomalyEvent]:
-    """Run all three detectors and return the flat event list."""
+    """Run all detectors and return the flat event list.
+
+    ``bunch_method`` controls which bunching detector(s) fire:
+      * ``"time"``     — only the stop-crossing time-gap detector (default; preserves
+                         pre-distance-detector behaviour).
+      * ``"distance"`` — only the along-route separation detector.
+      * ``"both"``     — both detectors run; events are tagged with ``method`` so
+                         callers can tell them apart.
+    """
     out: list[AnomalyEvent] = []
     for bus in buses:
         out.extend(detect_idle_events(bus, idle_min_threshold=idle_min_threshold))
         out.extend(detect_crowd_events(bus, crowd_pct_threshold=crowd_pct_threshold))
-    out.extend(
-        detect_bunch_events(buses, bunch_seconds_threshold=bunch_seconds_threshold)
-    )
+    if bunch_method in ("time", "both"):
+        out.extend(
+            detect_bunch_events(buses, bunch_seconds_threshold=bunch_seconds_threshold)
+        )
+    if bunch_method in ("distance", "both"):
+        out.extend(
+            detect_bunch_events_distance(
+                buses, bunch_distance_threshold_m=bunch_distance_threshold_m
+            )
+        )
     return out

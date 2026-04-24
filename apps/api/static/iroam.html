@@ -155,7 +155,9 @@ async function loadDashboardData(p) {
     `&direction_id=${direction_id}` +
     `&bunch_sec=${p.bunchInt}` +
     `&idle_min=${p.idleMin}` +
-    `&crowd_pct=${p.crowdPct}`;
+    `&crowd_pct=${p.crowdPct}` +
+    `&bunch_dist=${p.bunchDistM}` +
+    `&bunch_method=${p.bunchMethod}`;
   const [stopsRes, busesRes, analyticsRes] = await Promise.all([
     fetchJSON(`/iroam/stops?route_id=${encodeURIComponent(p.route)}&direction_id=${direction_id}`),
     fetchJSON(`/iroam/buses?${qs}`),
@@ -200,13 +202,14 @@ const SecLabel = ({ children }) => (
     color: 'var(--t3)', marginBottom: 10 }}>{children}</div>
 );
 
-const Slider = ({ label, unit, min, max, step, value, onChange, color = 'var(--accent)' }) => (
-  <div style={{ marginBottom: 18 }}>
+const Slider = ({ label, unit, min, max, step, value, onChange, color = 'var(--accent)', disabled = false }) => (
+  <div style={{ marginBottom: 18, opacity: disabled ? 0.4 : 1, pointerEvents: disabled ? 'none' : 'auto' }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 13 }}>
       <span style={{ color: 'var(--t2)' }}>{label}</span>
       <span style={{ fontFamily: 'IBM Plex Mono', color, fontWeight: 500, fontSize: 12 }}>{value}{unit}</span>
     </div>
     <input type="range" min={min} max={max} step={step} value={value}
+      disabled={disabled}
       onChange={e => onChange(+e.target.value)}
       style={{ accentColor: color }} />
     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--t3)', marginTop: 4 }}>
@@ -214,6 +217,24 @@ const Slider = ({ label, unit, min, max, step, value, onChange, color = 'var(--a
     </div>
   </div>
 );
+
+const MethodToggle = ({ value, onChange, color }) => {
+  const opts = [['time','Time'], ['distance','Distance'], ['both','Both']];
+  return (
+    <div style={{ display:'flex', gap:4, marginBottom:14, padding:3, background:'var(--bg2)',
+      border:'1px solid var(--border)', borderRadius:6 }}>
+      {opts.map(([k,l]) => (
+        <button key={k} onClick={() => onChange(k)} style={{
+          flex:1, padding:'5px 8px', fontSize:11, fontWeight:500, cursor:'pointer',
+          border:'none', borderRadius:4,
+          background: value === k ? color : 'transparent',
+          color: value === k ? 'var(--bg)' : 'var(--t2)',
+          fontFamily: 'inherit',
+        }}>{l}</button>
+      ))}
+    </div>
+  );
+};
 
 const AnomalyPill = ({ type, active, onClick }) => {
   const cfg = { bunch: ['var(--bunch)', '▲ Bunching'], idle: ['var(--idle)', '▲ Idling'], crowd: ['var(--crowd)', '● Crowding'] };
@@ -306,13 +327,22 @@ const TopBar = ({ page, route, date, dir, drawerOpen, setDrawerOpen, totals, isL
       </div>
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16 }}>
         <div style={{ display: 'flex', gap: 12 }}>
-          {[
-            ['var(--bunch)', `${(totals && totals.bunch) || 0} Bunching`],
-            ['var(--idle)',  `${(totals && totals.idle)  || 0} Idling`],
-            ['var(--crowd)', `${(totals && totals.crowd) || 0} Crowding`],
-          ].map(([c,l]) => (
+          {(() => {
+            const bt = (totals && totals.bunch_time) || 0;
+            const bd = (totals && totals.bunch_dist) || 0;
+            // Only show the "(A time · B dist)" split when both detectors
+            // actually produced events — avoids clutter for the common
+            // single-method case.
+            const split = bt > 0 && bd > 0 ? ` (${bt} time · ${bd} dist)` : '';
+            return [
+              ['var(--bunch)', `${(totals && totals.bunch) || 0} Bunching`, split],
+              ['var(--idle)',  `${(totals && totals.idle)  || 0} Idling`,   ''],
+              ['var(--crowd)', `${(totals && totals.crowd) || 0} Crowding`, ''],
+            ];
+          })().map(([c,l,sub]) => (
             <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--t3)' }}>
               <span style={{ width: 6, height: 6, borderRadius: '50%', background: c, display: 'inline-block' }} />{l}
+              {sub && <span style={{ opacity: 0.7, fontSize: 10 }}>{sub}</span>}
             </span>
           ))}
         </div>
@@ -354,7 +384,7 @@ const TopBar = ({ page, route, date, dir, drawerOpen, setDrawerOpen, totals, isL
 // PARAMETER PANEL
 // ─────────────────────────────────────────────────────────────────────────────
 const ParameterPanel = ({ params, setP, onApply, applying, routeCatalog, stopsVersion }) => {
-  const { route, date, dir, bunchInt, idleMin, crowdPct, stops } = params;
+  const { route, date, dir, bunchInt, idleMin, crowdPct, bunchDistM, bunchMethod, stops } = params;
 
   const toggleStop = s => setP(p => ({
     ...p, stops: p.stops.includes(s) ? p.stops.filter(x => x !== s) : [...p.stops, s]
@@ -376,11 +406,15 @@ const ParameterPanel = ({ params, setP, onApply, applying, routeCatalog, stopsVe
     return entry ? entry.service_dates : [];
   }, [routeCatalog, route, wantDirId]);
 
+  const bunchVal =
+    bunchMethod === 'time'     ? `${bunchInt} sec`
+  : bunchMethod === 'distance' ? `${bunchDistM} m`
+                               : `${bunchInt} s · ${bunchDistM} m`;
   const summary = [
     { label: 'Route',      val: `Route ${route}` },
     { label: 'Date',       val: date },
     { label: 'Direction',  val: dir },
-    { label: 'Bunching ≤', val: `${bunchInt} sec`,  color: 'var(--bunch)' },
+    { label: 'Bunching ≤', val: bunchVal,           color: 'var(--bunch)' },
     { label: 'Idling ≥',   val: `${idleMin} min`,   color: 'var(--idle)' },
     { label: 'Crowding ≥', val: `${crowdPct}%`,     color: 'var(--crowd)' },
     { label: 'Stops',      val: stops.length ? `${stops.length} filtered` : 'All' },
@@ -465,13 +499,35 @@ const ParameterPanel = ({ params, setP, onApply, applying, routeCatalog, stopsVe
       <div style={{ flex: 1, padding: 24, overflowY: 'auto' }}>
         <SecLabel>Anomaly Detection Thresholds</SecLabel>
         <div style={{ marginTop: 8 }}>
+          {/* Bus Bunching — two detection methods (time-gap at stops vs. along-route distance). */}
+          <div style={{ background: 'var(--s2)', borderRadius: '0 8px 8px 0',
+            border: '1px solid var(--border)', borderLeft: '3px solid var(--bunch)', padding: '18px 20px', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <div style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--bunch)', boxShadow: '0 0 8px var(--bunch)' }} />
+              <span style={{ fontWeight: 600, fontSize: 14 }}>Bus Bunching</span>
+            </div>
+            <div style={{ fontSize: 11.5, color: 'var(--t3)', marginBottom: 14 }}>
+              <b>Time</b>: two consecutive trips cross the same stop within the headway interval.
+              &nbsp;<b>Distance</b>: along-route separation between consecutive buses stays within the threshold.
+            </div>
+            <MethodToggle value={bunchMethod} color="var(--bunch)"
+              onChange={v => setP(p => ({ ...p, bunchMethod: v }))} />
+            <Slider label="Min Headway Interval" unit=" sec" min={30} max={300} step={10}
+              value={bunchInt} color="var(--bunch)"
+              disabled={bunchMethod === 'distance'}
+              onChange={v => setP(p => ({ ...p, bunchInt: v }))} />
+            <Slider label="Min Separation Distance" unit=" m" min={50} max={1000} step={25}
+              value={bunchDistM} color="var(--bunch)"
+              disabled={bunchMethod === 'time'}
+              onChange={v => setP(p => ({ ...p, bunchDistM: v }))} />
+          </div>
+
           {[
-            { key:'bunchInt', color:'var(--bunch)', title:'Bus Bunching', desc:'Flags buses with headway below this interval as bunched.', sliderProps: { label:'Min Headway Interval', unit:' sec', min:30, max:300, step:10, value:bunchInt, k:'bunchInt' } },
             { key:'idleMin',  color:'var(--idle)',  title:'Bus Idling',   desc:'Flags stationary events longer than this duration.', sliderProps: { label:'Min Idle Duration', unit:' min', min:1, max:20, step:0.5, value:idleMin, k:'idleMin' } },
             { key:'crowdPct', color:'var(--crowd)', title:'Overcrowding', desc:'Flags stop events exceeding this passenger load ratio.', sliderProps: { label:'Occupancy Threshold', unit:'%', min:50, max:150, step:5, value:crowdPct, k:'crowdPct' } },
           ].map(({ key, color, title, desc, sliderProps }) => (
-            <div key={key} style={{ background: 'var(--s2)', borderLeft: `3px solid ${color}`, borderRadius: '0 8px 8px 0',
-              border: `1px solid var(--border)`, borderLeft: `3px solid ${color}`, padding: '18px 20px', marginBottom: 14 }}>
+            <div key={key} style={{ background: 'var(--s2)', borderRadius: '0 8px 8px 0',
+              border: '1px solid var(--border)', borderLeft: `3px solid ${color}`, padding: '18px 20px', marginBottom: 14 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                 <div style={{ width: 7, height: 7, borderRadius: '50%', background: color, boxShadow: `0 0 8px ${color}` }} />
                 <span style={{ fontWeight: 600, fontSize: 14 }}>{title}</span>
@@ -1562,7 +1618,7 @@ const StackedBar = ({ data }) => {
 // PARAM DRAWER
 // ─────────────────────────────────────────────────────────────────────────────
 const ParamDrawer = ({ params, setP, onApply, applying, routeCatalog }) => {
-  const { route, date, dir, bunchInt, idleMin, crowdPct } = params;
+  const { route, date, dir, bunchInt, idleMin, crowdPct, bunchDistM, bunchMethod } = params;
   const sel = {
     width: '100%', background: 'var(--s3)', border: '1px solid var(--border)',
     borderRadius: 7, color: 'var(--t1)', padding: '7px 10px', fontSize: 12,
@@ -1640,8 +1696,31 @@ const ParamDrawer = ({ params, setP, onApply, applying, routeCatalog }) => {
 
         {/* Thresholds */}
         <div style={{ marginTop: 12 }}>
+          {/* Bus Bunching — compact method toggle + both sliders (inactive one greyed). */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:5, marginBottom:6, fontSize:12 }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--bunch)', display: 'inline-block', boxShadow: '0 0 6px var(--bunch)' }} />
+              <span style={{ color: 'var(--t2)' }}>Bunching</span>
+            </div>
+            <MethodToggle value={bunchMethod} color="var(--bunch)"
+              onChange={v => setP(p => ({ ...p, bunchMethod: v }))} />
+            {[
+              { k:'bunchInt',   unit:' sec', min:30, max:300,  step:10, val:bunchInt,   label:'Headway ≤', disabled: bunchMethod === 'distance' },
+              { k:'bunchDistM', unit:' m',   min:50, max:1000, step:25, val:bunchDistM, label:'Separation ≤', disabled: bunchMethod === 'time' },
+            ].map(({ k, unit, min, max, step, val, label, disabled }) => (
+              <div key={k} style={{ marginBottom: 10, opacity: disabled ? 0.4 : 1, pointerEvents: disabled ? 'none' : 'auto' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 11.5 }}>
+                  <span style={{ color: 'var(--t3)' }}>{label}</span>
+                  <span style={{ fontFamily: 'IBM Plex Mono', color: 'var(--bunch)', fontWeight: 500, fontSize: 11 }}>{val}{unit}</span>
+                </div>
+                <input type="range" min={min} max={max} step={step} value={val}
+                  disabled={disabled}
+                  onChange={e => setP(p => ({ ...p, [k]: +e.target.value }))}
+                  style={{ accentColor: 'var(--bunch)' }} />
+              </div>
+            ))}
+          </div>
           {[
-            { k:'bunchInt', color:'var(--bunch)', label:'Bunching ≤', unit:' sec', min:30, max:300, step:10, val:bunchInt },
             { k:'idleMin',  color:'var(--idle)',  label:'Idling ≥',   unit:' min', min:1,  max:20,  step:0.5, val:idleMin },
             { k:'crowdPct', color:'var(--crowd)', label:'Crowding ≥', unit:'%',    min:50, max:150, step:5,   val:crowdPct },
           ].map(({ k, color, label, unit, min, max, step, val }) => (
@@ -1701,12 +1780,14 @@ const App = () => {
   const [routeCatalog, setRouteCatalog] = useState([]);   // [{ route_id, direction_id, service_dates, ... }]
   const [params, setParams] = useState({
     route:'501', date:'', dir:'Southbound',
-    bunchInt:120, idleMin:5, crowdPct:75, stops:[],
+    bunchInt:120, idleMin:5, crowdPct:75,
+    bunchDistM:150, bunchMethod:'time',
+    stops:[],
   });
   const [applying, setApplying] = useState(false);
   const [busData, setBusData] = useState([]);
   const [analytics, setAnalytics] = useState(null);
-  const [totals, setTotals] = useState({ bunch:0, idle:0, crowd:0 });
+  const [totals, setTotals] = useState({ bunch:0, idle:0, crowd:0, bunch_time:0, bunch_dist:0 });
   const [stopsVersion, setStopsVersion] = useState(0);
   const [loadError, setLoadError] = useState(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -1769,7 +1850,7 @@ const App = () => {
       .then(({ busesRes, analyticsRes }) => {
         setBusData(busesRes.buses || []);
         setAnalytics(analyticsRes || null);
-        setTotals(busesRes.totals || { bunch:0, idle:0, crowd:0 });
+        setTotals(busesRes.totals || { bunch:0, idle:0, crowd:0, bunch_time:0, bunch_dist:0 });
         setLiveTimeWindowEnd(busesRes.time_window?.end ?? null);
         setStopsVersion(v => v + 1);
       })
@@ -1778,10 +1859,10 @@ const App = () => {
         setLoadError(String(err && err.message || err));
         setBusData([]);
         setAnalytics(null);
-        setTotals({ bunch:0, idle:0, crowd:0 });
+        setTotals({ bunch:0, idle:0, crowd:0, bunch_time:0, bunch_dist:0 });
       })
       .finally(() => setApplying(false));
-  }, [params.route, params.date, params.dir, params.bunchInt, params.idleMin, params.crowdPct]);
+  }, [params.route, params.date, params.dir, params.bunchInt, params.idleMin, params.crowdPct, params.bunchDistM, params.bunchMethod]);
 
   // Auto-apply once when the catalog resolves and we have a date to work with.
   useEffect(() => {
@@ -1809,7 +1890,9 @@ const App = () => {
           `&direction_id=${direction_id}` +
           `&bunch_sec=${params.bunchInt}` +
           `&idle_min=${params.idleMin}` +
-          `&crowd_pct=${params.crowdPct}`;
+          `&crowd_pct=${params.crowdPct}` +
+          `&bunch_dist=${params.bunchDistM}` +
+          `&bunch_method=${params.bunchMethod}`;
         const [busesRes, analyticsRes] = await Promise.all([
           fetchJSON(`/iroam/buses?${qs}`),
           fetchJSON(`/iroam/analytics?${qs}`),
@@ -1818,7 +1901,7 @@ const App = () => {
         applyStopsAndWindow(null, busesRes.time_window);
         setBusData(busesRes.buses || []);
         setAnalytics(analyticsRes || null);
-        setTotals(busesRes.totals || { bunch:0, idle:0, crowd:0 });
+        setTotals(busesRes.totals || { bunch:0, idle:0, crowd:0, bunch_time:0, bunch_dist:0 });
         setLiveTimeWindowEnd(busesRes.time_window?.end ?? null);
       } catch (err) {
         console.warn('iroam LIVE refresh failed', err);
@@ -1826,7 +1909,7 @@ const App = () => {
     };
     const id = setInterval(tick, 25000);
     return () => clearInterval(id);
-  }, [isLive, sliceKey, params.bunchInt, params.idleMin, params.crowdPct]);
+  }, [isLive, sliceKey, params.bunchInt, params.idleMin, params.crowdPct, params.bunchDistM, params.bunchMethod]);
 
   const handleSetPage = p => { setPage(p); if (p === 'params') setDrawerOpen(false); };
 

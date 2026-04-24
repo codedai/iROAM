@@ -96,6 +96,7 @@ def fetch_trajectories_for_slice(
         .order_by(
             TripTrajectory.trip_id.asc(),
             TripTrajectory.start_date.asc(),
+            TripTrajectory.vehicle_id.asc(),
             TripTrajectory.datetime.asc(),
         )
     )
