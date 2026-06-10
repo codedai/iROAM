@@ -369,6 +369,15 @@ def iroam_forecast(
             t_ref_min=t_ref_min,
             freshness_s=freshness_s,
             edge_exclude=edge_exclude,
+            # Pass shape length so the service can truncate each bus's
+            # per-horizon prediction to its plausible remaining trip time —
+            # see forecast.py docstring for why this matters.
+            route_shape_length_m=float(route_stops.shape_length_m),
+            # Identity passthrough so shadow mode (when enabled) can log
+            # which slice each prediction came from. No effect otherwise.
+            route_id=route_id,
+            direction_id=int(direction_id),
+            service_date_iso=service_date.isoformat(),
         )
     except PredictorUnavailable as exc:
         raise HTTPException(
@@ -383,6 +392,11 @@ def iroam_forecast(
         "t_ref_min": result.t_ref_min,
         "horizon_steps": result.horizon_steps,
         "step_seconds": result.step_seconds,
+        "seq_len": result.seq_len,
+        "feature_set": result.feature_set,
+        "model_label": result.model_label,
+        "shadow_mode": result.shadow_mode,
+        "horizon_cap_min": result.horizon_cap_min,
         "thresholds": result.thresholds,
         "num_buses_total": result.num_buses_total,
         "num_running": result.num_running,

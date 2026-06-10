@@ -1,0 +1,92 @@
+{
+  "0": {
+    "threshold": 0.060000000000000005,
+    "f2_val": 0.6358183376178235,
+    "pr_auc_val": 0.4500710468470675,
+    "brier_val": 0.017787467867895215,
+    "best_iter": 0,
+    "positive_rate_train": 0.0,
+    "method": "bag_avg_cal/precision@0.30"
+  },
+  "1": {
+    "threshold": 0.19,
+    "f2_val": 0.5231343283582089,
+    "pr_auc_val": 0.30777449775590726,
+    "brier_val": 0.022361829862742075,
+    "best_iter": 0,
+    "positive_rate_train": 0.0,
+    "method": "bag_avg_cal/precision@0.30"
+  },
+  "2": {
+    "threshold": 0.24000000000000002,
+    "f2_val": 0.45807166605097893,
+    "pr_auc_val": 0.22373822876776958,
+    "brier_val": 0.02578736282686002,
+    "best_iter": 0,
+    "positive_rate_train": 0.0,
+    "method": "bag_avg_cal/precision@0.30"
+  },
+  "3": {
+    "threshold": 0.25,
+    "f2_val": 0.4240971912617031,
+    "pr_auc_val": 0.19143107686193536,
+    "brier_val": 0.02838278894611325,
+    "best_iter": 0,
+    "positive_rate_train": 0.0,
+    "method": "bag_avg_cal/precision@0.30"
+  },
+  "4": {
+    "threshold": 0.23,
+    "f2_val": 0.3948036131127576,
+    "pr_auc_val": 0.16523991410122926,
+    "brier_val": 0.030073002461846566,
+    "best_iter": 0,
+    "positive_rate_train": 0.0,
+    "method": "bag_avg_cal/precision@0.30"
+  },
+  "5": {
+    "threshold": 0.28,
+    "f2_val": 0.3644508350846146,
+    "pr_auc_val": 0.14635569888434577,
+    "brier_val": 0.0315900916221315,
+    "best_iter": 0,
+    "positive_rate_train": 0.0,
+    "method": "bag_avg_cal/precision@0.30"
+  },
+  "6": {
+    "threshold": 0.22,
+    "f2_val": 0.34936434414112544,
+    "pr_auc_val": 0.13352012065381447,
+    "brier_val": 0.033094377125654585,
+    "best_iter": 0,
+    "positive_rate_train": 0.0,
+    "method": "bag_avg_cal/precision@0.30"
+  },
+  "7": {
+    "threshold": 0.23,
+    "f2_val": 0.3353083759762995,
+    "pr_auc_val": 0.12529838988202843,
+    "brier_val": 0.034429186676494826,
+    "best_iter": 0,
+    "positive_rate_train": 0.0,
+    "method": "bag_avg_cal/precision@0.30"
+  },
+  "8": {
+    "threshold": 0.2,
+    "f2_val": 0.33452608804194056,
+    "pr_auc_val": 0.12162845350421447,
+    "brier_val": 0.03601600278307,
+    "best_iter": 0,
+    "positive_rate_train": 0.0,
+    "method": "bag_avg_cal/precision@0.30"
+  },
+  "9": {
+    "threshold": 0.2,
+    "f2_val": 0.33039242716662076,
+    "pr_auc_val": 0.11924581766510838,
+    "brier_val": 0.0375130920429928,
+    "best_iter": 0,
+    "positive_rate_train": 0.0,
+    "method": "bag_avg_cal/precision@0.30"
+  }
+}

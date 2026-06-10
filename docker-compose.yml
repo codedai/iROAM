@@ -36,6 +36,11 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://ttc:ttc@postgres:5432/ttc_gtfsrt
       GTFS_STATIC_DIR: /gtfs
+      # Cap per-bus forecast horizons at 10 minutes regardless of which bundle
+      # is loaded. v3 already trains at pred_len=10 so this is a no-op for it;
+      # for any v1/v2 fallback the cap enforces the same product shape.
+      # Override to 30 to re-enable the long-horizon advisory display.
+      FORECAST_HORIZON_CAP_MIN: "10"
     volumes:
       - "./Complete GTFS:/gtfs:ro"
     ports:

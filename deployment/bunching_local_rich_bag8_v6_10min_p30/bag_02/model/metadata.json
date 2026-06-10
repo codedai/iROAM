@@ -1,0 +1,62 @@
+{
+  "model_type": "per_horizon_lightgbm",
+  "framework": "lightgbm",
+  "lightgbm_version": "4.6.0",
+  "numpy_version": "2.4.2",
+  "trained_at": "2026-05-31T21:40:14.311860+00:00",
+  "seq_len": 20,
+  "pred_len": 10,
+  "step": 2,
+  "n_channels": 12,
+  "n_features": 240,
+  "variant": "matched",
+  "data_root": "",
+  "feature_set": "rich",
+  "extra_features": [
+    "stop_index_norm",
+    "gap_closure_m_per_s",
+    "tod_sin",
+    "tod_cos",
+    "rel_speed_to_d1",
+    "target_accel_3tick"
+  ],
+  "n_extra": 6,
+  "vendor_schema_v": 2,
+  "extras_schema_v": 4,
+  "step_seconds": 60,
+  "route_id": "29",
+  "threshold_strategy": "precision@0.30",
+  "split": {
+    "train_dates": [
+      "2026-04-22",
+      "2026-04-23",
+      "2026-04-24",
+      "2026-04-25",
+      "2026-04-26",
+      "2026-04-27",
+      "2026-04-28",
+      "2026-04-29",
+      "2026-04-30",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-07",
+      "2026-05-08",
+      "2026-05-20",
+      "2026-05-21",
+      "2026-05-22",
+      "2026-05-23"
+    ],
+    "val_dates": [
+      "2026-05-24",
+      "2026-05-25",
+      "2026-05-26",
+      "2026-05-27"
+    ],
+    "test_dates": [
+      "2026-05-28",
+      "2026-05-29",
+      "2026-05-30"
+    ]
+  }
+}

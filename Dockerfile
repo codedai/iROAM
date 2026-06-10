@@ -45,6 +45,7 @@ COPY core ./core
 COPY db ./db
 COPY deployment ./deployment
 COPY scripts ./scripts
+COPY data_process ./data_process
 COPY alembic.ini ./alembic.ini
 
 # ── Migrator: one-shot alembic upgrade head ────────────────────────────────

@@ -87,6 +87,14 @@ class _StubPredictor:
         h: {"threshold": 0.5, "f2": 1.0, "precision": 1.0, "recall": 1.0}
         for h in range(30)
     }
+    # Vendor-schema geometry matches the test bus generator (10 s ticks).
+    metadata = {
+        "seq_len": 60,
+        "step_seconds": STEP_SECONDS,
+        "feature_set": "vendor",
+        "n_channels": 9,
+    }
+    scaler = {"speed_mean": 0.0, "speed_std": 1.0, "gap_mean": 0.0, "gap_std": 1.0}
 
     def predict_proba(self, batch: np.ndarray, *, is_scaled: bool) -> np.ndarray:
         n = batch.shape[0]

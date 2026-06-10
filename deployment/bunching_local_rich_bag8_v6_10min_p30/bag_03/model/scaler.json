@@ -1,0 +1,25 @@
+{
+  "speed_mean": 5.063808441162109,
+  "speed_std": 4.538637638092041,
+  "gap_mean": 4925.7197265625,
+  "gap_std": 6290.04150390625,
+  "threshold_raw": 100.0,
+  "threshold_scaled": -0.7671999816798705,
+  "channel_layout": [
+    {
+      "offset": 0,
+      "name": "speed",
+      "scale": "speed_mean/std"
+    },
+    {
+      "offset": 1,
+      "name": "gap",
+      "scale": "gap_mean/std"
+    },
+    {
+      "offset": 2,
+      "name": "aux",
+      "scale": "passthrough"
+    }
+  ]
+}

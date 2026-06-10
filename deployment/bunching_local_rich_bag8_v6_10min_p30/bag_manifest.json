@@ -1,0 +1,35 @@
+{
+  "kind": "bagged_lightgbm",
+  "n_bags": 8,
+  "seed": 2026,
+  "feature_set": "rich",
+  "seq_len": 20,
+  "pred_len": 10,
+  "n_channels": 12,
+  "vendor_schema_v": 2,
+  "extras_schema_v": 4,
+  "n_extra": 6,
+  "extra_features": [
+    "stop_index_norm",
+    "gap_closure_m_per_s",
+    "tod_sin",
+    "tod_cos",
+    "rel_speed_to_d1",
+    "target_accel_3tick"
+  ],
+  "step_seconds": 60,
+  "route_id": "29",
+  "trained_at": "2026-05-31T21:42:21.187368+00:00",
+  "bag_dirs": [
+    "bag_00/model",
+    "bag_01/model",
+    "bag_02/model",
+    "bag_03/model",
+    "bag_04/model",
+    "bag_05/model",
+    "bag_06/model",
+    "bag_07/model"
+  ],
+  "threshold_strategy": "precision@0.30",
+  "scaler_inline": true
+}

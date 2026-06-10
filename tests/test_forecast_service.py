@@ -49,8 +49,10 @@ def _mod(dt_utc: datetime) -> float:
 class _StubPredictor:
     """Predictable stand-in for BunchingPredictor.
 
-    ``predict_proba`` returns a ramp ``[h/pred_len for h in ...]`` scaled by a
-    per-bus factor that grows with ``bus.max_prob``. ``alert`` delegates.
+    ``predict_proba`` returns a ramp ``[h/pred_len for h in ...]`` for every
+    sample. ``alert`` delegates. ``metadata`` declares the same geometry the
+    test buses are synthesised with, so the live feature builder accepts the
+    fixtures unchanged.
     """
 
     pred_len = 30
@@ -61,12 +63,24 @@ class _StubPredictor:
             h: {"threshold": 0.5, "f2": 1.0, "precision": 1.0, "recall": 1.0}
             for h in range(self.pred_len)
         }
+        # Vendor-schema geometry — matches the test bus generator below.
+        self.metadata = {
+            "seq_len": SEQ_LEN,
+            "step_seconds": STEP_SECONDS,
+            "feature_set": "vendor",
+            "n_channels": 9,
+        }
+        self.scaler = {
+            "speed_mean": 0.0, "speed_std": 1.0,
+            "gap_mean": 0.0, "gap_std": 1.0,
+        }
 
     def predict_proba(self, batch: np.ndarray, *, is_scaled: bool) -> np.ndarray:
-        assert is_scaled is False  # the service must pass raw
+        # Vendor-only path passes raw windows (is_scaled=False); rich would pass
+        # is_scaled=True. The orchestrator picks based on bundle metadata.
+        assert is_scaled is False
         assert batch.ndim == 3
         n = batch.shape[0]
-        # Ramp 0→0.9 per horizon; same for every bus (keeps the maths simple).
         ramp = np.linspace(0.0, 0.9, self.pred_len, dtype=np.float32)
         return np.broadcast_to(ramp, (n, self.pred_len)).astype(np.float32)
 
@@ -112,7 +126,11 @@ def test_forecast_tags_eligible_and_ineligible_buses():
     eligible_ids = {r["bus_id"] for r in result.per_bus if r["eligible"]}
     ineligible = {r["bus_id"]: r for r in result.per_bus if not r["eligible"]}
     assert eligible_ids == {0, 1}
-    assert "no upstream" in (ineligible[2]["ineligible_reason"] or "")
+    # Reason string was renamed when the live builder switched from
+    # upstream→downstream layouts; both old and new phrasings indicate the
+    # same condition (no usable peer bus on the history window).
+    reason = ineligible[2]["ineligible_reason"] or ""
+    assert "no leader" in reason or "no upstream" in reason
     assert "edge-exclude" in (ineligible[3]["ineligible_reason"] or "")
 
 

@@ -11,14 +11,18 @@
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
+/* Default = dark theme. ``--ink-rgb`` is the foreground RGB used by alpha
+   overlays throughout the JSX (gridlines, faint text, etc.); switching it
+   between white and dark-navy flips the whole UI between themes. */
 :root {
+  --ink-rgb: 255, 255, 255;
   --bg:     #080D18;
   --s1:     #0F1624;
   --s2:     #162035;
   --s3:     #1E2D4A;
   --s4:     #253659;
-  --border: rgba(255,255,255,0.07);
-  --bhi:    rgba(255,255,255,0.13);
+  --border: rgba(var(--ink-rgb),0.07);
+  --bhi:    rgba(var(--ink-rgb),0.13);
   --t1:     #E2E8F5;
   --t2:     #8A9CC0;
   --t3:     #4A5A7A;
@@ -27,6 +31,27 @@
   --bunch:  #4D9EFF;
   --idle:   #FF5A5A;
   --crowd:  #3DDB7E;
+  color-scheme: dark;
+}
+body.theme-light {
+  --ink-rgb: 17, 24, 39;
+  --bg:     #F7F8FB;
+  --s1:     #FFFFFF;
+  --s2:     #F1F3F8;
+  --s3:     #E4E8EF;
+  --s4:     #D2D8E3;
+  --border: rgba(var(--ink-rgb),0.10);
+  --bhi:    rgba(var(--ink-rgb),0.18);
+  --t1:     #1A2238;
+  --t2:     #475168;
+  --t3:     #8090A8;
+  /* Brand colors nudged slightly so they read on white without changing meaning. */
+  --accent: #C2641E;
+  --acc2:   #0F8B83;
+  --bunch:  #2563EB;
+  --idle:   #DC2626;
+  --crowd:  #15803D;
+  color-scheme: light;
 }
 html, body, #root { height: 100%; background: var(--bg); color: var(--t1); overflow: hidden; font-family: 'IBM Plex Sans', sans-serif; }
 button { font-family: inherit; }
@@ -260,7 +285,7 @@ const NAV = [
   { id: 'analysis', label: 'Analytics',  icon: 'analysis' },
 ];
 
-const Sidebar = ({ active, setActive }) => (
+const Sidebar = ({ active, setActive, theme, setTheme }) => (
   <aside style={{ width: 216, background: 'var(--s1)', borderRight: '1px solid var(--border)',
     display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
 
@@ -298,6 +323,32 @@ const Sidebar = ({ active, setActive }) => (
         );
       })}
     </nav>
+
+    {/* Theme switcher — segmented control. Toggles a body class so every
+        CSS variable swaps in unison; preference persists across reloads
+        via localStorage (see the bootstrap effect in <App>). */}
+    <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)' }}>
+      <div style={{ fontSize: 9.5, color: 'var(--t3)', letterSpacing: '0.1em',
+        textTransform: 'uppercase', marginBottom: 6, fontWeight: 600 }}>Theme</div>
+      <div style={{ display: 'flex', gap: 4, padding: 3,
+        background: 'var(--s2)', border: '1px solid var(--border)', borderRadius: 6 }}>
+        {[
+          { id: 'dark',  label: '◐ Dark' },
+          { id: 'light', label: '◑ Light' },
+        ].map(opt => {
+          const on = theme === opt.id;
+          return (
+            <button key={opt.id} onClick={() => setTheme(opt.id)} style={{
+              flex: 1, padding: '5px 0', borderRadius: 4, border: 'none', cursor: 'pointer',
+              fontSize: 11, fontWeight: on ? 600 : 400,
+              background: on ? 'var(--accent)' : 'transparent',
+              color: on ? '#fff' : 'var(--t2)',
+              transition: 'all 0.12s ease',
+            }}>{opt.label}</button>
+          );
+        })}
+      </div>
+    </div>
 
     {/* Footer */}
     <div style={{ padding: '14px 18px', borderTop: '1px solid var(--border)' }}>
@@ -422,7 +473,7 @@ const ParameterPanel = ({ params, setP, onApply, applying, routeCatalog, stopsVe
 
   const sel = v => ({
     flex: 1, background: 'var(--s2)', border: '1px solid var(--border)', borderRadius: 7,
-    color: 'var(--t1)', padding: '8px 12px', fontSize: 13, cursor: 'pointer', colorScheme: 'dark',
+    color: 'var(--t1)', padding: '8px 12px', fontSize: 13, cursor: 'pointer', colorScheme: 'inherit',
   });
 
   return (
@@ -586,6 +637,16 @@ const ParameterPanel = ({ params, setP, onApply, applying, routeCatalog, stopsVe
 // PLAYBACK PAGE
 // ─────────────────────────────────────────────────────────────────────────────
 const SPEED_OPTIONS = [0.5, 1, 2, 4];
+// Demonstration window sizes for the time–distance diagram. `null` == the full
+// data window; the others (minutes) zoom the diagram in around the playhead so
+// the user can look closer at system performance.
+const WINDOW_OPTIONS = [
+  { label: 'All', minutes: null },
+  { label: '12h', minutes: 720 },
+  { label: '6h',  minutes: 360 },
+  { label: '3h',  minutes: 180 },
+  { label: '1h',  minutes: 60  },
+];
 
 const PlaybackPage = ({ busData, sliceKey, isLive, route, serviceDate, directionId, liveTimeWindowEnd }) => {
   const [playing, setPlaying] = useState(false);
@@ -594,10 +655,15 @@ const PlaybackPage = ({ busData, sliceKey, isLive, route, serviceDate, direction
   const [mapW, setMapW] = useState(270);
   const [dragging, setDragging] = useState(false);
   const [speed, setSpeed] = useState(1);
+  const [winMin, setWinMin] = useState(null);   // visible diagram window (minutes); null == all
   const [forecastOpen, setForecastOpen] = useState(false);
   const [forecasting, setForecasting] = useState(false);
   const [forecast, setForecast] = useState(null);
   const [forecastError, setForecastError] = useState(null);
+  // Hovered bus id from the forecast panel — passed down so the TDDiagram /
+  // SchematicMap can highlight the matching trajectory + marker. ``id``
+  // matches the same array index the panel uses (== busData[i].id).
+  const [hoveredBusId, setHoveredBusId] = useState(null);
   const chartRef = useRef(null);
   const rafRef = useRef(null);
 
@@ -686,6 +752,17 @@ const PlaybackPage = ({ busData, sliceKey, isLive, route, serviceDate, direction
 
   const pct = (t - START_T) / (END_T - START_T) * 100;
 
+  // Visible diagram window. The global slider still spans the whole day; only
+  // the time–distance diagram zooms, centering the window on the playhead and
+  // clamping to the data bounds so it pans smoothly as playback advances.
+  let viewStart = START_T, viewEnd = END_T;
+  if (winMin != null && (END_T - START_T) > winMin) {
+    viewStart = t - winMin / 2;
+    viewEnd   = t + winMin / 2;
+    if (viewStart < START_T) { viewStart = START_T; viewEnd = START_T + winMin; }
+    if (viewEnd   > END_T)   { viewEnd   = END_T;   viewStart = END_T - winMin; }
+  }
+
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100%', animation:'fadein 0.2s ease' }}>
 
@@ -722,6 +799,30 @@ const PlaybackPage = ({ busData, sliceKey, isLive, route, serviceDate, direction
             fontFamily:'IBM Plex Mono', fontSize:12, fontWeight:500,
           }}
         >{speed}×</button>
+
+        {/* Demonstration window — zooms the time–distance diagram so the user
+            can look closer at system performance around the playhead. */}
+        <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+          <span style={{ fontSize:9.5, fontWeight:600, letterSpacing:'0.08em',
+            textTransform:'uppercase', color:'var(--t3)' }}>Window</span>
+          <div style={{ display:'flex', gap:2, padding:2, borderRadius:7,
+            background:'var(--s2)', border:'1px solid var(--border)' }}>
+            {WINDOW_OPTIONS.map(opt => {
+              const on = winMin === opt.minutes;
+              return (
+                <button key={opt.label} onClick={() => setWinMin(opt.minutes)}
+                  title={opt.minutes == null ? 'Full data window' : `Zoom to a ${opt.label} window around the playhead`}
+                  style={{
+                    height:26, minWidth:34, padding:'0 7px', borderRadius:5, border:'none',
+                    background: on ? 'var(--accent)' : 'transparent',
+                    color: on ? '#fff' : 'var(--t2)', cursor:'pointer',
+                    fontFamily:'IBM Plex Mono', fontSize:11, fontWeight:600,
+                    transition:'all 0.13s',
+                  }}>{opt.label}</button>
+              );
+            })}
+          </div>
+        </div>
 
         <div style={{ flex:1, display:'flex', alignItems:'center', gap:10 }}>
           <span style={{ fontFamily:'IBM Plex Mono', fontSize:12, color:'var(--accent)', minWidth:40 }}>{fmt(t)}</span>
@@ -762,7 +863,7 @@ const PlaybackPage = ({ busData, sliceKey, isLive, route, serviceDate, direction
 
       {/* Chart area */}
       <div ref={chartRef} style={{ flex:1, display:'flex', overflow:'hidden' }}>
-        <TDDiagram busData={busData} currentT={t} vis={vis} fmt={fmt} />
+        <TDDiagram busData={busData} currentT={t} vis={vis} fmt={fmt} hoveredBusId={hoveredBusId} viewStart={viewStart} viewEnd={viewEnd} />
         <div
           onMouseDown={() => setDragging(true)}
           title="Drag to resize spatial view"
@@ -777,12 +878,12 @@ const PlaybackPage = ({ busData, sliceKey, isLive, route, serviceDate, direction
         >
           <div style={{
             position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-            width: 2, height: 28, background: dragging ? 'white' : 'var(--t3)', borderRadius: 1,
+            width: 2, height: 28, background: dragging ? 'var(--t1)' : 'var(--t3)', borderRadius: 1,
             opacity: dragging ? 1 : 0.5, pointerEvents: 'none',
           }} />
         </div>
         <div style={{ width: mapW, flexShrink: 0, display: 'flex' }}>
-          <SchematicMap busData={busData} currentT={t} vis={vis} width={mapW} />
+          <SchematicMap busData={busData} currentT={t} vis={vis} width={mapW} hoveredBusId={hoveredBusId} />
         </div>
       </div>
       {forecastOpen && (
@@ -793,6 +894,8 @@ const PlaybackPage = ({ busData, sliceKey, isLive, route, serviceDate, direction
           isLive={isLive}
           fmt={fmt}
           onClose={() => setForecastOpen(false)}
+          hoveredBusId={hoveredBusId}
+          onHoverBus={setHoveredBusId}
         />
       )}
     </div>
@@ -840,7 +943,16 @@ function adaptForecast(payload) {
       stop_idx: b.stop_idx ?? 0,
       risk: Math.round((b.max_prob ?? 0) * 100),
       first_step: b.first_alert_step,
-      step_seconds: payload.step_seconds || 10,
+      step_seconds: payload.step_seconds || 60,
+      // Per-bus rationale surfaced by the new feature builder. closure_m_s
+      // > 0 ⇒ leader is being caught; gap_m is the current along-route gap.
+      forward_gap_m: b.forward_gap_m,
+      gap_closure_m_s: b.gap_closure_m_s,
+      // Map-index + color so the panel can show the same chip the
+      // SchematicMap labels its buses with, and the same color used by the
+      // matching trajectory in TDDiagram. ``bus_id`` is the array index.
+      mapIndex: b.bus_id + 1,
+      color: BUS_COLORS[b.bus_id % BUS_COLORS.length],
     }));
   // Bucket ineligibles by reason for the collapsed pill.
   const reasonBuckets = {};
@@ -858,11 +970,16 @@ function adaptForecast(payload) {
     numEligible: payload.num_eligible ?? eligible.length,
     numRunning: payload.num_running ?? 0,
     numTotal: payload.num_buses_total ?? perBus.length,
+    modelLabel: payload.model_label || 'predictor',
+    featureSet: payload.feature_set || 'vendor',
+    seqLen: payload.seq_len || 0,
+    stepSeconds: payload.step_seconds || 60,
   };
 }
 
-const ForecastPanel = ({ forecast, forecasting, forecastError, isLive, fmt, onClose }) => {
+const ForecastPanel = ({ forecast, forecasting, forecastError, isLive, fmt, onClose, hoveredBusId, onHoverBus }) => {
   const [showExcluded, setShowExcluded] = useState(false);
+  const setHover = onHoverBus || (() => {});
   return (
     <div style={{
       height: 260, flexShrink: 0, display: 'flex',
@@ -886,7 +1003,13 @@ const ForecastPanel = ({ forecast, forecasting, forecastError, isLive, fmt, onCl
           }}>✕</button>
         </div>
         <div style={{ fontSize: 11, color: 'var(--t3)', lineHeight: 1.5 }}>
-          LightGBM per-horizon · 5-min horizon<br/>
+          {forecast ? (
+            <>
+              {forecast.modelLabel} · {forecast.horizonMin}-min horizon · {Math.round((forecast.stepSeconds||60)/60*10)/10}-min steps<br/>
+            </>
+          ) : (
+            <>LightGBM per-horizon · loading…<br/></>
+          )}
           {isLive ? 'LIVE — t_ref pinned to latest slice' : 'historical — t_ref at playhead'}
         </div>
         {forecasting ? (
@@ -922,7 +1045,7 @@ const ForecastPanel = ({ forecast, forecasting, forecastError, isLive, fmt, onCl
       {/* Time-series forecast curve */}
       <div style={{ flex: 1.4, padding: '10px 16px', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         <div style={{ fontSize: 11, color: 'var(--t2)', marginBottom: 4 }}>
-          Predicted bunching alert rate — next 5 min
+          Predicted bunching alert rate — next {forecast ? forecast.horizonMin : 5} min
         </div>
         <div style={{ flex: 1, minHeight: 0 }}>
           <ForecastCurve forecast={forecast} forecasting={forecasting} fmt={fmt} />
@@ -932,28 +1055,73 @@ const ForecastPanel = ({ forecast, forecasting, forecastError, isLive, fmt, onCl
       {/* At-risk buses + excluded */}
       <div style={{ flex: 1, padding: '10px 16px', minWidth: 0, overflow: 'auto', display:'flex', flexDirection:'column', gap:10 }}>
         <div>
-          <div style={{ fontSize: 11, color: 'var(--t2)', marginBottom: 6 }}>At-risk vehicles</div>
+          <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', marginBottom: 6 }}>
+            <div style={{ fontSize: 11, color: 'var(--t2)' }}>At-risk vehicles</div>
+            <div style={{ fontSize: 9.5, color: 'var(--t3)', fontFamily:'IBM Plex Mono' }}>
+              chip = map #&nbsp;·&nbsp;hover to highlight
+            </div>
+          </div>
           {forecasting || !forecast ? (
             <div style={{ color: 'var(--t3)', fontSize: 11 }}>—</div>
           ) : forecast.busRisks.length === 0 ? (
             <div style={{ color: 'var(--t3)', fontSize: 11 }}>No eligible buses at this t_ref.</div>
           ) : forecast.busRisks.map(b => {
-            const color = b.risk >= 70 ? 'var(--bunch)' : b.risk >= 45 ? 'var(--idle)' : 'var(--acc2)';
+            const riskColor = b.risk >= 70 ? 'var(--bunch)' : b.risk >= 45 ? 'var(--idle)' : 'var(--acc2)';
             const firstMin = b.first_step != null
               ? `+${Math.round(b.first_step * b.step_seconds / 60 * 10) / 10}m`
               : '—';
+            const gapM = b.forward_gap_m;
+            const closure = b.gap_closure_m_s;
+            const etaSec = (gapM != null && closure != null && closure > 0.05)
+              ? Math.max(0, (gapM - 100) / closure)
+              : null;
+            const etaLabel = etaSec != null
+              ? (etaSec < 60 ? `${Math.round(etaSec)}s` : `${Math.round(etaSec/60)}m`)
+              : null;
+            const isHover = hoveredBusId === b.id;
+            // The colored chip + "#N" is the same identity rendered on the
+            // SchematicMap marker AND the trajectory in the TDDiagram (when
+            // hovered). It's the load-bearing link between the three views.
             return (
-              <div key={b.id} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:5, fontSize:11 }}>
-                <div style={{ width:6, height:6, borderRadius:'50%', background:color, flexShrink:0 }} />
-                <div style={{ fontFamily:'IBM Plex Mono', color:'var(--t1)', width:70, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                  #{b.vehicle_id || b.id}
+              <div key={b.id}
+                onMouseEnter={() => setHover(b.id)}
+                onMouseLeave={() => setHover(null)}
+                style={{
+                  display:'flex', flexDirection:'column', gap:2, marginBottom:4, padding:'4px 6px',
+                  fontSize:11, borderRadius:5, cursor:'pointer',
+                  background: isHover ? 'var(--s3)' : 'transparent',
+                  outline: isHover ? `1px solid ${b.color}` : '1px solid transparent',
+                  transition: 'background 0.12s ease, outline 0.12s ease',
+                }}>
+                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                  {/* Map-index chip: matches the number on the SchematicMap
+                      marker and the badge on the highlighted TD trajectory. */}
+                  <div style={{
+                    width: 22, height: 16, borderRadius: 3,
+                    background: b.color,
+                    color: 'rgba(0,0,0,0.85)',
+                    fontFamily:'IBM Plex Mono', fontWeight:700, fontSize:10,
+                    display:'flex', alignItems:'center', justifyContent:'center',
+                    flexShrink:0,
+                  }}>{b.mapIndex}</div>
+                  <div style={{ fontFamily:'IBM Plex Mono', color:'var(--t1)', minWidth:0, flex:'0 1 auto', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontSize:10.5 }}
+                    title={`GTFS vehicle ${b.vehicle_id || b.id}`}>
+                    {b.vehicle_id || b.id}
+                  </div>
+                  <div style={{ flex:1, color:'var(--t3)', fontSize:10, textAlign:'right' }}>
+                    stop {Math.floor(b.stop_idx)+1}/{NUM_STOPS} · 1st {firstMin}
+                  </div>
+                  <div style={{ fontFamily:'IBM Plex Mono', color:riskColor, width:36, textAlign:'right', fontWeight:600 }}>
+                    {b.risk}%
+                  </div>
                 </div>
-                <div style={{ flex:1, color:'var(--t3)', fontSize:10 }}>
-                  stop {Math.floor(b.stop_idx)+1} / {NUM_STOPS} · 1st {firstMin}
-                </div>
-                <div style={{ fontFamily:'IBM Plex Mono', color, width:36, textAlign:'right', fontWeight:600 }}>
-                  {b.risk}%
-                </div>
+                {(gapM != null || closure != null) && (
+                  <div style={{ paddingLeft:30, color:'var(--t3)', fontSize:10, fontFamily:'IBM Plex Mono' }}>
+                    {gapM != null ? `gap ${Math.round(gapM)}m` : ''}
+                    {closure != null ? ` · Δ${closure >= 0 ? '+' : ''}${closure.toFixed(1)}m/s` : ''}
+                    {etaLabel ? ` · eta ${etaLabel}` : ''}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -1039,12 +1207,12 @@ const ForecastCurve = ({ forecast, forecasting, fmt }) => {
       <svg width={W} height={H} style={{ display:'block' }}>
         {yTicks.map(v => (
           <g key={v}>
-            <line x1={PAD.left} x2={W-PAD.right} y1={yS(v)} y2={yS(v)} stroke="rgba(255,255,255,0.05)" />
-            <text x={PAD.left-6} y={yS(v)+3} textAnchor="end" fontSize={9} fill="rgba(255,255,255,0.35)" fontFamily="IBM Plex Mono">{v}</text>
+            <line x1={PAD.left} x2={W-PAD.right} y1={yS(v)} y2={yS(v)} stroke="rgba(var(--ink-rgb),0.05)" />
+            <text x={PAD.left-6} y={yS(v)+3} textAnchor="end" fontSize={9} fill="rgba(var(--ink-rgb),0.35)" fontFamily="IBM Plex Mono">{v}</text>
           </g>
         ))}
         {xTicks.map(tk => (
-          <text key={tk} x={xS(tk)} y={H-PAD.bottom+14} textAnchor="middle" fontSize={9} fill="rgba(255,255,255,0.4)" fontFamily="IBM Plex Mono">{fmt(tk)}</text>
+          <text key={tk} x={xS(tk)} y={H-PAD.bottom+14} textAnchor="middle" fontSize={9} fill="rgba(var(--ink-rgb),0.4)" fontFamily="IBM Plex Mono">{fmt(tk)}</text>
         ))}
         {/* Mean-prob ±6pp spread band */}
         <path d={bandPath} fill="var(--bunch)" opacity={0.12} />
@@ -1059,9 +1227,13 @@ const ForecastCurve = ({ forecast, forecasting, fmt }) => {
   );
 };
 
-const TDDiagram = ({ busData, currentT, vis, fmt }) => {
+const TDDiagram = ({ busData, currentT, vis, fmt, hoveredBusId, viewStart, viewEnd }) => {
   const containerRef = useRef(null);
   const [dims, setDims] = useState({ w: 760, h: 460 });
+  // Visible time window — defaults to the full data window, but the playback
+  // controls can hand down a narrower [viewStart, viewEnd] to zoom in.
+  const VS = viewStart != null ? viewStart : START_T;
+  const VE = viewEnd   != null ? viewEnd   : END_T;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -1075,7 +1247,7 @@ const TDDiagram = ({ busData, currentT, vis, fmt }) => {
 
   const W = dims.w, H = dims.h;
   const PAD = { top: 24, right: 28, bottom: 40, left: 86 };
-  const xS = t => PAD.left + (t - START_T) / (END_T - START_T) * (W - PAD.left - PAD.right);
+  const xS = t => PAD.left + (t - VS) / (VE - VS) * (W - PAD.left - PAD.right);
   const yS = d => {
     const lo = Math.floor(Math.min(d, NUM_STOPS - 2));
     const t = d - lo;
@@ -1084,43 +1256,56 @@ const TDDiagram = ({ busData, currentT, vis, fmt }) => {
     return yLo + t * (yHi - yLo);
   };
   const xTicks = (() => {
-    const span = Math.max(1, END_T - START_T);
+    const span = Math.max(1, VE - VS);
     const stepM = span > 360 ? 120 : span > 120 ? 60 : span > 40 ? 30 : span > 20 ? 15 : 5;
-    const first = Math.ceil(START_T / stepM) * stepM;
+    const first = Math.ceil(VS / stepM) * stepM;
     const out = [];
-    for (let v = first; v <= END_T; v += stepM) out.push(v);
+    for (let v = first; v <= VE; v += stepM) out.push(v);
     return out;
   })();
+  // Stable id for the plot-area clip so zoomed trajectories don't bleed over
+  // the axis labels when the window is narrower than the full day.
+  const clipId = useRef(`tdclip-${Math.random().toString(36).slice(2)}`).current;
 
   return (
     <div ref={containerRef} style={{ flex:1, borderRight:'1px solid var(--border)', overflow:'hidden', position:'relative', display:'flex', flexDirection:'column', minWidth:300 }}>
       <div style={{ padding:'10px 16px 0', fontSize:10, color:'var(--t3)', letterSpacing:'0.08em', textTransform:'uppercase', flexShrink:0 }}>Time–Distance Diagram</div>
       <svg width="100%" height="100%" style={{ display:'block', flex:1 }}>
 
+        <defs>
+          <clipPath id={clipId}>
+            <rect x={PAD.left} y={PAD.top - 9}
+              width={Math.max(0, W - PAD.left - PAD.right)}
+              height={Math.max(0, H - PAD.top - PAD.bottom + 9)} />
+          </clipPath>
+        </defs>
+
         {/* Grid */}
         {xTicks.map(tick => (
           <g key={tick}>
             <line x1={xS(tick)} y1={PAD.top} x2={xS(tick)} y2={H - PAD.bottom}
-              stroke="rgba(255,255,255,0.04)" strokeWidth={1} />
-            <text x={xS(tick)} y={H - PAD.bottom + 14} textAnchor="middle" fontSize={9} fill="rgba(255,255,255,0.28)">{fmt(tick)}</text>
+              stroke="rgba(var(--ink-rgb),0.04)" strokeWidth={1} />
+            <text x={xS(tick)} y={H - PAD.bottom + 14} textAnchor="middle" fontSize={9} fill="rgba(var(--ink-rgb),0.28)">{fmt(tick)}</text>
           </g>
         ))}
         {ROUTE29_STOPS.map((s, i) => (
           <g key={s.name}>
             <line x1={PAD.left} y1={yS(i)} x2={W - PAD.right} y2={yS(i)}
-              stroke={i % 4 === 0 ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.025)'} strokeWidth={1} />
-            <text x={PAD.left - 7} y={yS(i) + 3.5} textAnchor="end" fontSize={9.5} fill="rgba(255,255,255,0.32)">{s.name}</text>
+              stroke={i % 4 === 0 ? 'rgba(var(--ink-rgb),0.06)' : 'rgba(var(--ink-rgb),0.025)'} strokeWidth={1} />
+            <text x={PAD.left - 7} y={yS(i) + 3.5} textAnchor="end" fontSize={9.5} fill="rgba(var(--ink-rgb),0.32)">{s.name}</text>
           </g>
         ))}
 
+        <g clipPath={`url(#${clipId})`}>
+
         {/* Peak shading — AM + PM, clipped to the visible window */}
         {[[480,600],[1020,1140]]
-          .filter(([a,b]) => b > START_T && a < END_T)
+          .filter(([a,b]) => b > VS && a < VE)
           .map(([a,b], i) => {
-            const aa = Math.max(a, START_T), bb = Math.min(b, END_T);
+            const aa = Math.max(a, VS), bb = Math.min(b, VE);
             return (
               <rect key={i} x={xS(aa)} y={PAD.top} width={xS(bb)-xS(aa)} height={H - PAD.top - PAD.bottom}
-                fill="rgba(255,255,255,0.02)" />
+                fill="rgba(var(--ink-rgb),0.02)" />
             );
           })}
 
@@ -1129,10 +1314,37 @@ const TDDiagram = ({ busData, currentT, vis, fmt }) => {
           const pts = bus.points.filter(p => p.t <= currentT);
           if (pts.length < 2) return null;
           const d = pts.map((p, i) => `${i===0?'M':'L'}${xS(p.t).toFixed(1)},${yS(p.d).toFixed(1)}`).join(' ');
+          const isHover = hoveredBusId != null && hoveredBusId === bus.id;
+          const dimmed = hoveredBusId != null && !isHover;
           return <path key={bus.id} d={d} fill="none"
-            stroke={BUS_COLORS[idx % BUS_COLORS.length]} strokeWidth={1.8}
-            opacity={0.75} strokeLinecap="round" strokeLinejoin="round" />;
+            stroke={BUS_COLORS[idx % BUS_COLORS.length]}
+            strokeWidth={isHover ? 3.2 : 1.8}
+            opacity={isHover ? 1.0 : dimmed ? 0.15 : 0.75}
+            strokeLinecap="round" strokeLinejoin="round" />;
         })}
+
+        {/* Hover badge — render the bus map-index (matches Spatial View label
+            and the chip in the forecast panel) on top of the highlighted line. */}
+        {hoveredBusId != null && (() => {
+          const bus = busData.find(b => b.id === hoveredBusId);
+          if (!bus) return null;
+          const pts = bus.points.filter(p => p.t <= currentT);
+          if (pts.length === 0) return null;
+          const last = pts[pts.length - 1];
+          const x = xS(last.t), y = yS(last.d);
+          const idx = busData.indexOf(bus);
+          const color = BUS_COLORS[idx % BUS_COLORS.length];
+          return (
+            <g style={{ pointerEvents: 'none' }}>
+              <circle cx={x} cy={y} r={6} fill={color} stroke="var(--bg)" strokeWidth={1.5} />
+              <rect x={x + 9} y={y - 10} width={28} height={20} rx={4}
+                fill={color} stroke="var(--bg)" strokeWidth={1.5} />
+              <text x={x + 23} y={y + 4.5} textAnchor="middle"
+                fontSize={11} fontWeight="700" fill="rgba(0,0,0,0.85)"
+                fontFamily="IBM Plex Mono">#{bus.id + 1}</text>
+            </g>
+          );
+        })()}
 
         {/* Anomaly markers */}
         {busData.flatMap((bus, idx) =>
@@ -1150,14 +1362,16 @@ const TDDiagram = ({ busData, currentT, vis, fmt }) => {
         <polygon points={`${xS(currentT)},${PAD.top} ${xS(currentT)-5},${PAD.top-9} ${xS(currentT)+5},${PAD.top-9}`}
           fill="var(--accent)" />
 
+        </g>
+
         {/* Axis labels */}
-        <text x={(PAD.left + W - PAD.right) / 2} y={H - 4} textAnchor="middle" fontSize={9} fill="rgba(255,255,255,0.2)">Time of Day</text>
+        <text x={(PAD.left + W - PAD.right) / 2} y={H - 4} textAnchor="middle" fontSize={9} fill="rgba(var(--ink-rgb),0.2)">Time of Day</text>
       </svg>
     </div>
   );
 };
 
-const SchematicMap = ({ busData, currentT, vis }) => {
+const SchematicMap = ({ busData, currentT, vis, hoveredBusId }) => {
   const containerRef = useRef(null);
   const [dims, setDims] = useState({ w: 270, h: 500 });
 
@@ -1216,8 +1430,8 @@ const SchematicMap = ({ busData, currentT, vis }) => {
       <svg width="100%" height="100%" style={{ display: 'block', flex: 1 }}>
 
         {/* Route glow + line */}
-        <path d={routePath} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={8} strokeLinecap="round" strokeLinejoin="round" />
-        <path d={routePath} fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
+        <path d={routePath} fill="none" stroke="rgba(var(--ink-rgb),0.06)" strokeWidth={8} strokeLinecap="round" strokeLinejoin="round" />
+        <path d={routePath} fill="none" stroke="rgba(var(--ink-rgb),0.14)" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
 
         {/* Anomaly heat halos */}
         {Object.entries(anomHeat).map(([si, cnt]) => (
@@ -1227,8 +1441,8 @@ const SchematicMap = ({ busData, currentT, vis }) => {
         {/* Stops — proportionally spaced by real latitude */}
         {ROUTE29_STOPS.map((s, i) => (
           <g key={s.name}>
-            <circle cx={rx} cy={yP(i)} r={5} fill="var(--s3)" stroke="rgba(255,255,255,0.28)" strokeWidth={1.8} />
-            <text x={rx - 14} y={yP(i) + 4} textAnchor="end" fontSize={11} fill="rgba(255,255,255,0.5)">{s.name}</text>
+            <circle cx={rx} cy={yP(i)} r={5} fill="var(--s3)" stroke="rgba(var(--ink-rgb),0.28)" strokeWidth={1.8} />
+            <text x={rx - 14} y={yP(i) + 4} textAnchor="end" fontSize={11} fill="rgba(var(--ink-rgb),0.5)">{s.name}</text>
           </g>
         ))}
 
@@ -1237,11 +1451,20 @@ const SchematicMap = ({ busData, currentT, vis }) => {
           const by = interpY(bus.d), bx = rx;
           const offset = ((bus.idx % 3) - 1) * 16;
           const color = BUS_COLORS[bus.idx % BUS_COLORS.length];
+          const isHover = hoveredBusId != null && hoveredBusId === bus.id;
+          const dimmed  = hoveredBusId != null && !isHover;
+          // Highlight matches: a ring around the marker + 100% opacity; others
+          // fade so the eye lands on the one the user is hovering in the panel.
           return (
-            <g key={bus.id}>
+            <g key={bus.id} opacity={dimmed ? 0.25 : 1}>
               <line x1={bx} y1={by} x2={bx + 18 + offset} y2={by}
-                stroke={color} strokeWidth={1} opacity={0.32} strokeDasharray="2,2" />
-              <rect x={bx + 8 + offset - 11} y={by - 8} width={24} height={16} rx={3} fill={color} opacity={0.92} />
+                stroke={color} strokeWidth={1} opacity={isHover ? 0.85 : 0.32} strokeDasharray="2,2" />
+              {isHover && (
+                <rect x={bx + 8 + offset - 14} y={by - 11} width={30} height={22} rx={5}
+                  fill="none" stroke={color} strokeWidth={2.2} />
+              )}
+              <rect x={bx + 8 + offset - 11} y={by - 8} width={24} height={16} rx={3}
+                fill={color} opacity={isHover ? 1 : 0.92} />
               <text x={bx + 8 + offset} y={by + 5} textAnchor="middle"
                 fontSize={9.5} fontWeight="700" fill="rgba(0,0,0,0.85)">{bus.id + 1}</text>
             </g>
@@ -1249,9 +1472,9 @@ const SchematicMap = ({ busData, currentT, vis }) => {
         })}
 
         {/* Cardinal labels */}
-        <text x={rx + 10} y={yP(NUM_STOPS-1) + 4} fontSize={11} fill="rgba(255,255,255,0.28)">N ↑</text>
-        <text x={rx + 10} y={yP(0) + 4}           fontSize={11} fill="rgba(255,255,255,0.28)">S ↓</text>
-        <text x={W - 4} y={H - 5} textAnchor="end" fontSize={8} fill="rgba(255,255,255,0.15)"
+        <text x={rx + 10} y={yP(NUM_STOPS-1) + 4} fontSize={11} fill="rgba(var(--ink-rgb),0.28)">N ↑</text>
+        <text x={rx + 10} y={yP(0) + 4}           fontSize={11} fill="rgba(var(--ink-rgb),0.28)">S ↓</text>
+        <text x={W - 4} y={H - 5} textAnchor="end" fontSize={8} fill="rgba(var(--ink-rgb),0.15)"
           fontFamily="IBM Plex Mono">{activeBuses.length} active · GTFS</text>
       </svg>
     </div>
@@ -1439,13 +1662,13 @@ const SpatialBubbleMap = ({ filter, stopFreq }) => {
       {/* y gridlines + labels */}
       {ticks.map(v => (
         <g key={v}>
-          <line x1={PAD.left} x2={W - PAD.right} y1={yS(v)} y2={yS(v)} stroke="rgba(255,255,255,0.05)" />
-          <text x={PAD.left - 6} y={yS(v) + 3.2} textAnchor="end" fontSize={8.5} fill="rgba(255,255,255,0.35)" fontFamily="IBM Plex Mono">{v}</text>
+          <line x1={PAD.left} x2={W - PAD.right} y1={yS(v)} y2={yS(v)} stroke="rgba(var(--ink-rgb),0.05)" />
+          <text x={PAD.left - 6} y={yS(v) + 3.2} textAnchor="end" fontSize={8.5} fill="rgba(var(--ink-rgb),0.35)" fontFamily="IBM Plex Mono">{v}</text>
         </g>
       ))}
 
       {/* baseline */}
-      <line x1={PAD.left} x2={W - PAD.right} y1={yS(0)} y2={yS(0)} stroke="rgba(255,255,255,0.18)" />
+      <line x1={PAD.left} x2={W - PAD.right} y1={yS(0)} y2={yS(0)} stroke="rgba(var(--ink-rgb),0.18)" />
 
       {/* bars + rotated stop labels */}
       {ROUTE29_STOPS.map((s, i) => {
@@ -1467,7 +1690,7 @@ const SpatialBubbleMap = ({ filter, stopFreq }) => {
                 x={cx} y={yS(0) + 8}
                 textAnchor="end"
                 transform={`rotate(-55, ${cx}, ${yS(0) + 8})`}
-                fontSize={8.5} fill="rgba(255,255,255,0.55)"
+                fontSize={8.5} fill="rgba(var(--ink-rgb),0.55)"
               >{s.name || ''}</text>
             )}
           </g>
@@ -1478,7 +1701,7 @@ const SpatialBubbleMap = ({ filter, stopFreq }) => {
       <text
         x={-H / 2} y={11}
         transform="rotate(-90)"
-        textAnchor="middle" fontSize={8.5} fill="rgba(255,255,255,0.4)"
+        textAnchor="middle" fontSize={8.5} fill="rgba(var(--ink-rgb),0.4)"
         letterSpacing="0.08em"
       >EVENTS</text>
     </svg>
@@ -1513,12 +1736,12 @@ const SpeedLine = ({ data }) => {
       {/* Peak shadings */}
       {[[2,6],[9,14]].map(([a,b],j)=>(
         <rect key={j} x={xS(a)} y={PAD.top} width={xS(b)-xS(a)} height={H-PAD.top-PAD.bottom}
-          fill="rgba(255,255,255,0.025)" rx={2} />
+          fill="rgba(var(--ink-rgb),0.025)" rx={2} />
       ))}
       {ticks.map(v=>(
         <g key={v}>
-          <line x1={PAD.left} y1={yS(v)} x2={W-PAD.right} y2={yS(v)} stroke="rgba(255,255,255,0.04)" />
-          <text x={PAD.left-5} y={yS(v)+3.5} textAnchor="end" fontSize={8.5} fill="rgba(255,255,255,0.28)">{v}</text>
+          <line x1={PAD.left} y1={yS(v)} x2={W-PAD.right} y2={yS(v)} stroke="rgba(var(--ink-rgb),0.04)" />
+          <text x={PAD.left-5} y={yS(v)+3.5} textAnchor="end" fontSize={8.5} fill="rgba(var(--ink-rgb),0.28)">{v}</text>
         </g>
       ))}
       {area && <path d={area} fill="url(#sg)" />}
@@ -1527,9 +1750,9 @@ const SpeedLine = ({ data }) => {
         <circle key={p.i} cx={xS(p.i)} cy={yS(p.v)} r={2.5} fill="var(--acc2)" />
       ))}
       {hours.filter((_,i)=>i%3===0).map((h,j)=>(
-        <text key={h} x={xS(j*3)} y={H-PAD.bottom+13} textAnchor="middle" fontSize={8.5} fill="rgba(255,255,255,0.28)">{h}:00</text>
+        <text key={h} x={xS(j*3)} y={H-PAD.bottom+13} textAnchor="middle" fontSize={8.5} fill="rgba(var(--ink-rgb),0.28)">{h}:00</text>
       ))}
-      <text x={PAD.left-22} y={(H)/2} textAnchor="middle" fontSize={8} fill="rgba(255,255,255,0.2)"
+      <text x={PAD.left-22} y={(H)/2} textAnchor="middle" fontSize={8} fill="rgba(var(--ink-rgb),0.2)"
         transform={`rotate(-90,${PAD.left-22},${H/2})`}>km/h</text>
     </svg>
   );
@@ -1551,8 +1774,8 @@ const GroupedBar = ({ bData, iData, cData }) => {
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width:'100%', height:'100%' }}>
       {ticks.map(v=>(
         <g key={v}>
-          <line x1={PAD.left} y1={yS(v)} x2={W-PAD.right} y2={yS(v)} stroke="rgba(255,255,255,0.04)" />
-          <text x={PAD.left-5} y={yS(v)+3.5} textAnchor="end" fontSize={8.5} fill="rgba(255,255,255,0.28)">{v}</text>
+          <line x1={PAD.left} y1={yS(v)} x2={W-PAD.right} y2={yS(v)} stroke="rgba(var(--ink-rgb),0.04)" />
+          <text x={PAD.left-5} y={yS(v)+3.5} textAnchor="end" fontSize={8.5} fill="rgba(var(--ink-rgb),0.28)">{v}</text>
         </g>
       ))}
       {hours.map((h,i)=>(
@@ -1560,14 +1783,14 @@ const GroupedBar = ({ bData, iData, cData }) => {
           {bData[i]>0 && <rect x={xS(i)+0.5}     y={yS(bData[i])} width={bw} height={yH(bData[i])} fill="var(--bunch)" opacity={0.82} rx={1.5} />}
           {iData[i]>0 && <rect x={xS(i)+bw+1.5}   y={yS(iData[i])} width={bw} height={yH(iData[i])} fill="var(--idle)"  opacity={0.82} rx={1.5} />}
           {cData[i]>0 && <rect x={xS(i)+2*bw+2.5} y={yS(cData[i])} width={bw} height={yH(cData[i])} fill="var(--crowd)" opacity={0.82} rx={1.5} />}
-          {i%3===0 && <text x={xS(i)+slotW/2} y={H-PAD.bottom+13} textAnchor="middle" fontSize={8.5} fill="rgba(255,255,255,0.28)">{h}:00</text>}
+          {i%3===0 && <text x={xS(i)+slotW/2} y={H-PAD.bottom+13} textAnchor="middle" fontSize={8.5} fill="rgba(var(--ink-rgb),0.28)">{h}:00</text>}
         </g>
       ))}
       {/* Legend */}
       {[['var(--bunch)','Bunching'],['var(--idle)','Idling'],['var(--crowd)','Crowding']].map(([c,l],j)=>(
         <g key={l}>
           <rect x={W-85} y={PAD.top+j*14} width={8} height={8} fill={c} rx={1.5} />
-          <text x={W-74} y={PAD.top+j*14+7} fontSize={8.5} fill="rgba(255,255,255,0.4)">{l}</text>
+          <text x={W-74} y={PAD.top+j*14+7} fontSize={8.5} fill="rgba(var(--ink-rgb),0.4)">{l}</text>
         </g>
       ))}
     </svg>
@@ -1582,15 +1805,15 @@ const StackedBar = ({ data }) => {
   const bw=slotW-2;
   const xS=i=>PAD.left+i*slotW;
   const totalH=H-PAD.top-PAD.bottom;
-  const colors=['rgba(255,255,255,0.13)','var(--idle)','var(--bunch)','var(--crowd)'];
+  const colors=['rgba(var(--ink-rgb),0.13)','var(--idle)','var(--bunch)','var(--crowd)'];
   const labels=['Normal','Idling','Bunching','Crowding'];
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width:'100%', height:'100%' }}>
       {[25,50,75].map(v=>(
         <g key={v}>
           <line x1={PAD.left} y1={H-PAD.bottom-v/100*totalH} x2={W-PAD.right} y2={H-PAD.bottom-v/100*totalH}
-            stroke="rgba(255,255,255,0.04)" />
-          <text x={PAD.left-5} y={H-PAD.bottom-v/100*totalH+3.5} textAnchor="end" fontSize={8.5} fill="rgba(255,255,255,0.25)">{v}%</text>
+            stroke="rgba(var(--ink-rgb),0.04)" />
+          <text x={PAD.left-5} y={H-PAD.bottom-v/100*totalH+3.5} textAnchor="end" fontSize={8.5} fill="rgba(var(--ink-rgb),0.25)">{v}%</text>
         </g>
       ))}
       {data.map((seg,i)=>{
@@ -1600,14 +1823,14 @@ const StackedBar = ({ data }) => {
             {seg.map((v,j)=>{ const h=(v/100)*totalH; y-=h;
               return <rect key={j} x={xS(i)+0.5} y={y} width={bw} height={h} fill={colors[j]} opacity={j===0?1:0.82} />;
             })}
-            {i%4===0 && <text x={xS(i)+bw/2} y={H-PAD.bottom+13} textAnchor="middle" fontSize={8.5} fill="rgba(255,255,255,0.28)">{hours[i]}:00</text>}
+            {i%4===0 && <text x={xS(i)+bw/2} y={H-PAD.bottom+13} textAnchor="middle" fontSize={8.5} fill="rgba(var(--ink-rgb),0.28)">{hours[i]}:00</text>}
           </g>
         );
       })}
       {labels.map((l,j)=>(
         <g key={l}>
           <rect x={W-PAD.right+10} y={PAD.top+j*18} width={10} height={10} fill={colors[j]} rx={2} />
-          <text x={W-PAD.right+25} y={PAD.top+j*18+8} fontSize={9} fill="rgba(255,255,255,0.45)">{l}</text>
+          <text x={W-PAD.right+25} y={PAD.top+j*18+8} fontSize={9} fill="rgba(var(--ink-rgb),0.45)">{l}</text>
         </g>
       ))}
     </svg>
@@ -1622,7 +1845,7 @@ const ParamDrawer = ({ params, setP, onApply, applying, routeCatalog }) => {
   const sel = {
     width: '100%', background: 'var(--s3)', border: '1px solid var(--border)',
     borderRadius: 7, color: 'var(--t1)', padding: '7px 10px', fontSize: 12,
-    cursor: 'pointer', colorScheme: 'dark', display: 'block',
+    cursor: 'pointer', colorScheme: 'inherit', display: 'block',
   };
 
   const routeIds = useMemo(() => {
@@ -1796,6 +2019,21 @@ const App = () => {
   // model sees what the backend actually has evidence for.
   const [liveTimeWindowEnd, setLiveTimeWindowEnd] = useState(null);
 
+  // Theme: dark (default) or light. Persists across reloads via localStorage.
+  // Initialised lazily so the first render already has the right value —
+  // otherwise the user sees a one-frame dark flash before the effect runs.
+  const [theme, setTheme] = useState(() => {
+    try {
+      const stored = window.localStorage.getItem('iroam.theme');
+      if (stored === 'light' || stored === 'dark') return stored;
+    } catch (_) { /* private-mode storage may throw */ }
+    return 'dark';
+  });
+  useEffect(() => {
+    document.body.classList.toggle('theme-light', theme === 'light');
+    try { window.localStorage.setItem('iroam.theme', theme); } catch (_) {}
+  }, [theme]);
+
   useEffect(() => {
     document.documentElement.style.setProperty('--accent', TWEAK_DEFAULTS.accentColor);
   }, []);
@@ -1921,7 +2159,7 @@ const App = () => {
 
   return (
     <div style={{ display:'flex', height:'100vh', overflow:'hidden' }}>
-      <Sidebar active={page} setActive={handleSetPage} />
+      <Sidebar active={page} setActive={handleSetPage} theme={theme} setTheme={setTheme} />
       <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
         <TopBar page={page} route={params.route} date={params.date} dir={params.dir} totals={totals}
           drawerOpen={drawerOpen} setDrawerOpen={setDrawerOpen} isLive={isLive} />
