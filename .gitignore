@@ -36,3 +36,19 @@ htmlcov/
 # Captured test fixtures may contain raw feed payloads; keep one sample in git only
 # (uncomment the next line to ignore all .pb files)
 # tests/fixtures/*.pb
+
+# Superseded local bunching-model experiments — only the serving bundle
+# (bunching_local_rich_bag8_v6_10min_p30) and the legacy vendor bundle
+# (bunching_lightgbm) are tracked; the predictor's fallback chain skips
+# missing dirs, so a fresh clone serves v6 directly.
+/deployment/bunching_local_v1/
+/deployment/bunching_local_rich_v1/
+/deployment/bunching_local_rich_bag8/
+/deployment/bunching_local_rich_bag8_v2_p30/
+/deployment/bunching_local_rich_bag8_v2_p50/
+/deployment/bunching_local_rich_bag8_v3_10min_p30/
+/deployment/bunching_local_rich_bag8_v4_10min_p30/
+/deployment/bunching_local_rich_bag8_v5_10min_p30/
+/deployment/bunching_tcn_v1/
+/deployment/bunching_tx_v1/
+/deployment/bunching_xgb_rich_v1/
