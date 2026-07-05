@@ -8,25 +8,21 @@ were written. Requires a reachable Postgres; auto-skips via ``db_session``.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
 import pytest
 from pyproj import Transformer
-
-from apps.analytics.shapes import METRIC_CRS
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from apps.analytics import runner
-from apps.analytics.gtfs_static import load_all
+from apps.analytics.shapes import METRIC_CRS
 from db.models.feed_fetch_log import FeedFetchLog
 from db.models.raw_snapshot import RawGtfsrtSnapshot
 from db.models.trip_trajectory import AnalyticsRun, TripTrajectory
 from db.models.vehicle_position import VehiclePosition
-
 
 _TRIP_ID = "T_SMOKE"
 _SHAPE_ID = "S_SMOKE"
@@ -185,6 +181,107 @@ def test_run_for_date_roundtrip(
     # Travel distances should fall within the 0..2000m synthetic shape.
     for r in traj_rows:
         assert 0.0 <= r.travel_distance_m <= 2100.0
+
+
+def _seed_vehicle_positions_with_gap(
+    session: Session, *, before: int = 8, after: int = 8, gap_seconds: int = 300
+) -> tuple[datetime, datetime]:
+    """Seed two clusters of GPS rows separated by a ``gap_seconds`` outage.
+
+    Returns the (start, end) UTC bounds of the gap so a test can assert nothing
+    was synthesized inside it. Rows within each cluster are 15 s apart.
+    """
+    transformer = Transformer.from_crs(METRIC_CRS, "EPSG:4326", always_xy=True)
+    x0, y0 = 630_000.0, 4_833_000.0
+    base_dt = datetime(2026, 4, 20, 13, 0, 0, tzinfo=timezone.utc)
+
+    log = FeedFetchLog(
+        feed_name="vehicle-positions", feed_url="http://example/feed", fetched_at=base_dt,
+        http_status=200, success=True, duration_ms=10, response_bytes=100,
+        feed_header_timestamp=base_dt, entity_count=before + after,
+    )
+    session.add(log)
+    session.flush()
+    snap = RawGtfsrtSnapshot(
+        fetch_log_id=log.id, feed_name="vehicle-positions", fetched_at=base_dt,
+        feed_header_timestamp=base_dt, content_sha256="1" * 64,
+    )
+    session.add(snap)
+    session.flush()
+
+    total = before + after
+    offsets = [15 * i for i in range(before)]
+    gap_lo = base_dt + timedelta(seconds=offsets[-1])
+    resume = offsets[-1] + gap_seconds
+    offsets += [resume + 15 * i for i in range(after)]
+    gap_hi = base_dt + timedelta(seconds=offsets[before])
+
+    for i, off in enumerate(offsets):
+        y = y0 + (2000.0 * i / (total - 1))
+        lon, lat = transformer.transform(x0, y)
+        dt = base_dt + timedelta(seconds=off)
+        session.add(
+            VehiclePosition(
+                snapshot_id=snap.id, fetched_at=dt, feed_header_timestamp=dt,
+                entity_id=f"g{i}", vehicle_timestamp=dt, vehicle_id="V_GAP",
+                trip_id=_TRIP_ID, route_id=_ROUTE_ID, direction_id=0,
+                start_date=_START_DATE, start_time=_START_TIME,
+                latitude=lat, longitude=lon, occupancy_status="MANY_SEATS_AVAILABLE",
+                raw_entity={"id": f"g{i}"},
+            )
+        )
+    session.commit()
+    return gap_lo, gap_hi
+
+
+def test_max_gap_seconds_threads_through_run_for_date(
+    db_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The online path (run_for_date → process_trip_instance → upsample_df)
+    honors ``max_gap_seconds``: a long outage is not bridged, and unset keeps
+    the legacy (bridged) behavior."""
+    gtfs_dir = _write_synthetic_gtfs(tmp_path)
+    from types import SimpleNamespace
+
+    import apps.analytics.gtfs_static as gs
+    monkeypatch.setattr(gs, "get_settings", lambda: SimpleNamespace(gtfs_static_dir=gtfs_dir))
+
+    gap_lo, gap_hi = _seed_vehicle_positions_with_gap(db_session, gap_seconds=300)
+    service_date = date_from_str(_START_DATE)
+
+    uncapped = runner.run_for_date(
+        db_session, service_date, route_id=_ROUTE_ID,
+        upsample_resolution_s=10, max_orthogonal_distance_m=200.0,
+    )
+    capped = runner.run_for_date(
+        db_session, service_date, route_id=_ROUTE_ID,
+        upsample_resolution_s=10, max_orthogonal_distance_m=200.0,
+        max_gap_seconds=60.0,
+    )
+
+    assert uncapped.status == capped.status == "ok"
+    # Bridging the 300 s outage adds ~30 synthetic points; capping drops them.
+    assert capped.rows_written < uncapped.rows_written
+
+    # The capped config is recorded on the analytics_runs row.
+    run_row = db_session.execute(
+        select(AnalyticsRun).where(AnalyticsRun.id == capped.run_id)
+    ).scalars().one()
+    assert run_row.config_json["max_gap_seconds"] == 60.0
+
+    # No stored (capped) trajectory row lands strictly inside the outage.
+    capped_rows = db_session.execute(
+        select(TripTrajectory).where(TripTrajectory.run_id == capped.run_id)
+    ).scalars().all()
+    assert not any(gap_lo < r.datetime < gap_hi for r in capped_rows)
+
+
+def test_analytics_max_gap_seconds_defaults_off() -> None:
+    """The new config knob is off by default (stored data unchanged unless set)."""
+    from core.config import Settings
+
+    # _env_file=None isolates the code default from any local .env override.
+    assert Settings(_env_file=None).analytics_max_gap_seconds is None
 
 
 def date_from_str(yyyymmdd: str):

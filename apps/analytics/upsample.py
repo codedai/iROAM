@@ -45,7 +45,11 @@ def compute_moving_speed(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def upsample_df(df: pd.DataFrame, resolution_seconds: int) -> pd.DataFrame:
+def upsample_df(
+    df: pd.DataFrame,
+    resolution_seconds: int,
+    max_gap_seconds: float | None = None,
+) -> pd.DataFrame:
     """Insert rows at fixed time boundaries between every consecutive pair.
 
     Each output row has ``observed`` set to False (it is synthesized). Source
@@ -58,6 +62,13 @@ def upsample_df(df: pd.DataFrame, resolution_seconds: int) -> pd.DataFrame:
     ``[ceil_to_res(floor(t_i)), floor(t_{i+1}))``; each boundary row copies
     the identity columns of whichever endpoint is nearer in *distance*, with
     distance extrapolated from row i at row i+1's speed.
+
+    ``max_gap_seconds`` caps synthetic fill: when a consecutive pair's time gap
+    strictly exceeds it, no boundary rows are emitted across that pair — the
+    real GPS outage is left as a gap rather than bridged by a straight ramp of
+    fabricated points (which downstream reads as a slow-crawl and triggers false
+    idle/bunch events). ``None`` disables the cap: output is then bit-identical
+    to the pre-cap behavior (the randomized parity test pins this).
 
     Requires columns: ``datetime``, ``travel_distance_m``, ``moving_speed_m_s``.
     """
@@ -79,6 +90,14 @@ def upsample_df(df: pd.DataFrame, resolution_seconds: int) -> pd.DataFrame:
 
     # Number of candidates with first_boundary + k*res < epoch_next, k >= 0.
     count = np.ceil((epoch_next - first_boundary) / res).astype(np.int64)
+
+    # Max-gap cap: zero the synthetic count for any pair whose real gap exceeds
+    # the threshold, so a long GPS outage is not bridged. Strict ``>`` keeps a
+    # gap exactly equal to the cap upsampled (consistent with "exceeds").
+    if max_gap_seconds is not None:
+        gap_seconds = (ns_next - ns_cur) / 1e9
+        count = np.where(gap_seconds > max_gap_seconds, 0, count)
+
     count = np.where(ns_next > ns_cur, np.maximum(count, 0), 0)
 
     total = int(count.sum())

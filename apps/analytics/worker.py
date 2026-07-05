@@ -65,6 +65,7 @@ def _tick(since: datetime, tz_name: str) -> int:
                 upsample_resolution_s=settings.analytics_upsample_resolution_s,
                 max_orthogonal_distance_m=settings.analytics_max_orthogonal_distance_m,
                 max_implied_speed_m_s=settings.analytics_max_implied_speed_m_s,
+                max_gap_seconds=settings.analytics_max_gap_seconds,
                 only_changed_since=since,
             )
         _logger.info(
