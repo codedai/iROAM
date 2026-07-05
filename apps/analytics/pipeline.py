@@ -125,12 +125,16 @@ def process_trip_instance(
     upsample_resolution_s: int = 10,
     max_orthogonal_distance_m: float = 200.0,
     max_implied_speed_m_s: float | None = None,
+    max_gap_seconds: float | None = None,
 ) -> pd.DataFrame:
     """Full per-trip transform: fetch -> extract -> project -> speed -> upsample.
 
     Returns the final upsampled DataFrame (empty if the trip has <2 usable
     points or if its shape can't be resolved). Caller converts to ORM rows
     and commits.
+
+    ``max_gap_seconds`` (``None`` = off) caps synthetic upsample fill so a long
+    GPS outage is left as a gap instead of a straight ramp of fabricated points.
     """
     # Bound the per-instance fetch: trip_ids repeat every service day within
     # a board period, so an unbounded query rereads the trip's entire history
@@ -213,7 +217,7 @@ def process_trip_instance(
 
     df = compute_moving_speed(df)
     df["observed"] = True
-    df_up = upsample_df(df, upsample_resolution_s)
+    df_up = upsample_df(df, upsample_resolution_s, max_gap_seconds=max_gap_seconds)
     if df_up.empty:
         return pd.DataFrame()
 

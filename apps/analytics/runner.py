@@ -80,6 +80,7 @@ def run_for_date(
     upsample_resolution_s: int = 10,
     max_orthogonal_distance_m: float = 200.0,
     max_implied_speed_m_s: float | None = None,
+    max_gap_seconds: float | None = None,
     export_csv_dir: Path | None = None,
     only_changed_since: datetime | None = None,
 ) -> RunOutcome:
@@ -96,6 +97,7 @@ def run_for_date(
         "upsample_resolution_s": upsample_resolution_s,
         "max_orthogonal_distance_m": max_orthogonal_distance_m,
         "max_implied_speed_m_s": max_implied_speed_m_s,
+        "max_gap_seconds": max_gap_seconds,
         "route_id": route_id,
         "only_changed_since": only_changed_since.isoformat() if only_changed_since else None,
     }
@@ -175,6 +177,7 @@ def run_for_date(
                 upsample_resolution_s=upsample_resolution_s,
                 max_orthogonal_distance_m=max_orthogonal_distance_m,
                 max_implied_speed_m_s=max_implied_speed_m_s,
+                max_gap_seconds=max_gap_seconds,
             )
             if df.empty:
                 continue

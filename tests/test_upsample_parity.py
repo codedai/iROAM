@@ -201,3 +201,79 @@ def test_last_step_clean_up_rounds_and_reorders() -> None:
     assert "extra_unused_col" not in out.columns
     assert out["travel_distance_m"].iloc[0] == 123.46
     assert out["moving_speed_m_s"].iloc[0] == 1.23
+
+
+# ── Task 5: max-gap cap on upsampling ──────────────────────────────────────
+
+
+def test_upsample_short_gap_unchanged_with_max_gap_seconds() -> None:
+    """A gap under the cap upsamples identically to the uncapped path."""
+    df = pd.DataFrame(
+        {
+            "datetime": [_ts(8, 0, 0), _ts(8, 0, 30)],
+            "travel_distance_m": [0.0, 300.0],
+            "moving_speed_m_s": [0.0, 10.0],
+            "observed": [True, True],
+            "trip_id": ["T1", "T1"],
+        }
+    )
+    capped = upsample_df(df, resolution_seconds=10, max_gap_seconds=60)
+    uncapped = upsample_df(df, resolution_seconds=10, max_gap_seconds=None)
+    assert capped.equals(uncapped)
+
+
+def test_upsample_long_gap_skipped_with_max_gap_seconds() -> None:
+    """A single pair exceeding the cap emits no synthetic points."""
+    df = pd.DataFrame(
+        {
+            "datetime": [_ts(8, 0, 0), _ts(8, 1, 0)],  # 60 s gap
+            "travel_distance_m": [0.0, 600.0],
+            "moving_speed_m_s": [0.0, 10.0],
+            "observed": [True, True],
+            "trip_id": ["T1", "T1"],
+        }
+    )
+    capped = upsample_df(df, resolution_seconds=10, max_gap_seconds=30)
+    uncapped = upsample_df(df, resolution_seconds=10, max_gap_seconds=None)
+    assert not capped.equals(uncapped)
+    assert capped.empty  # the only pair is over the cap → nothing bridged
+
+
+def test_upsample_max_gap_only_affects_long_pairs() -> None:
+    """Mixed trip: short pairs upsample as before; only the long pair is skipped."""
+    df = pd.DataFrame(
+        {
+            "datetime": [_ts(8, 0, 0), _ts(8, 0, 30), _ts(8, 5, 30), _ts(8, 5, 50)],
+            "travel_distance_m": [0.0, 300.0, 3300.0, 3500.0],
+            "moving_speed_m_s": [0.0, 10.0, 10.0, 10.0],
+            "observed": [True, True, True, True],
+            "trip_id": ["T1", "T1", "T1", "T1"],
+        }
+    )
+    capped = upsample_df(df, resolution_seconds=10, max_gap_seconds=60)
+    uncapped = upsample_df(df, resolution_seconds=10, max_gap_seconds=None)
+
+    # No synthetic row lands strictly inside the 300 s gap (8:00:30 .. 8:05:30).
+    lo, hi = _ts(8, 0, 30), _ts(8, 5, 30)
+    in_gap = capped[(capped["datetime"] > lo) & (capped["datetime"] < hi)]
+    assert in_gap.empty
+
+    # Every capped row also exists (with identical travel distance) in the
+    # uncapped output — capping only removes rows, never alters them.
+    merged = capped.merge(uncapped, on="datetime", suffixes=("_c", "_u"))
+    assert len(merged) == len(capped)
+    assert (merged["travel_distance_m_c"] == merged["travel_distance_m_u"]).all()
+
+
+def test_upsample_gap_equal_to_cap_still_upsamples() -> None:
+    """Boundary: a gap exactly equal to the cap is not skipped (strict >)."""
+    df = pd.DataFrame(
+        {
+            "datetime": [_ts(8, 0, 0), _ts(8, 0, 30)],  # 30 s gap == cap
+            "travel_distance_m": [0.0, 300.0],
+            "moving_speed_m_s": [0.0, 10.0],
+            "observed": [True, True],
+            "trip_id": ["T1", "T1"],
+        }
+    )
+    assert not upsample_df(df, resolution_seconds=10, max_gap_seconds=30).empty

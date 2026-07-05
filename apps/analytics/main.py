@@ -51,6 +51,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="drop points farther than this from the shape (overrides config)",
     )
     p.add_argument(
+        "--max-gap-seconds",
+        type=float,
+        default=None,
+        help="don't upsample across gaps longer than this many seconds "
+        "(overrides ANALYTICS_MAX_GAP_SECONDS; unset ⇒ config/no cap)",
+    )
+    p.add_argument(
         "--export-csv",
         type=Path,
         default=None,
@@ -77,6 +84,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.max_orthogonal_distance_m is not None
         else settings.analytics_max_orthogonal_distance_m
     )
+    max_gap = (
+        args.max_gap_seconds
+        if args.max_gap_seconds is not None
+        else settings.analytics_max_gap_seconds
+    )
 
     with SessionLocal() as session:
         outcome = run_for_date(
@@ -86,6 +98,7 @@ def main(argv: list[str] | None = None) -> int:
             upsample_resolution_s=upsample_s,
             max_orthogonal_distance_m=max_orth,
             max_implied_speed_m_s=settings.analytics_max_implied_speed_m_s,
+            max_gap_seconds=max_gap,
             export_csv_dir=args.export_csv,
             only_changed_since=args.since,
         )

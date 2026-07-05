@@ -76,6 +76,13 @@ class Settings(BaseSettings):
     # Along-route teleport filter: drop GPS points implying speeds above this
     # between consecutive samples (126 km/h default). Set <= 0 to disable.
     analytics_max_implied_speed_m_s: float = 35.0
+    # Max-gap cap for upsampling: when the time gap between two consecutive real
+    # points exceeds this, no synthetic points are emitted across it (the outage
+    # is left as a gap instead of a fabricated straight ramp). Unset / null ⇒ no
+    # cap (legacy behavior; stored trajectories unchanged). A sensible on value
+    # is ~3× the upsample resolution (e.g. 30s). Off by default because enabling
+    # it changes stored data — turn on deliberately and backfill separately.
+    analytics_max_gap_seconds: float | None = None
     analytics_worker_interval_seconds: int = 120
     analytics_worker_service_date_tz: str = "America/Toronto"
 
